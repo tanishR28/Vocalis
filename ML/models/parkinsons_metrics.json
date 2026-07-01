@@ -1,0 +1,17 @@
+{
+    "Train_MAE": 0.3014531134154949,
+    "Train_RMSE": 0.4358306564207578,
+    "Train_R2": 0.9971491437378928,
+    "Test_MAE": 0.9783879285641934,
+    "Test_RMSE": 1.4911405147793455,
+    "Test_R2": 0.9651648597603043,
+    "Best_Parameters": {
+        "subsample": 0.8,
+        "n_estimators": 300,
+        "min_child_weight": 5,
+        "max_depth": 6,
+        "learning_rate": 0.1,
+        "gamma": 0.2,
+        "colsample_bytree": 1.0
+    }
+}

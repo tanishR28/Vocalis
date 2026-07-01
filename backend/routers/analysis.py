@@ -452,6 +452,8 @@ def _persist_analysis_to_supabase(
                 "confidence": float(report.get("confidence", 0.0)),
                 "cough_detected": bool(report.get("cough_detected", False)),
                 "wheeze_detected": bool(report.get("wheeze_detected", False)),
+                "motor_updrs": float(report.get("motor_updrs")) if report.get("motor_updrs") is not None else None,
+                "model_source": report.get("model_source"),
             },
             "health_trend": report.get("health_trend", "stable"),
             "analyzed_at": analyzed_at_iso,
@@ -588,8 +590,11 @@ async def analyze_voice(
     file: UploadFile = File(...),
     disease: str = Form("unknown"),
     user_id: Optional[str] = Form(None),
+    age: Optional[str] = Form(None),
+    sex: Optional[str] = Form(None),
+    onboarded_at: Optional[str] = Form(None),
 ):
-    """Voice biomarker analysis using XGBoost (Parkinson/Depression) or rule-based Asthma."""
+    """Voice biomarker analysis using XGBoost or Parkinson UPDRS model."""
     temp_file_name = _save_upload_to_tempfile(file)
     try:
         file_size = os.path.getsize(temp_file_name)
@@ -625,8 +630,41 @@ async def analyze_voice(
                 content={"error": f"ML router failed to load. Checked path: {ml_model_dir}"},
             )
 
+        patient_meta = None
+        if target_disease == "Parkinson’s":
+            try:
+                patient_age = int(age) if age is not None and str(age).strip() != "" else None
+            except (TypeError, ValueError):
+                patient_age = None
+            try:
+                patient_sex = int(sex) if sex is not None and str(sex).strip() != "" else None
+            except (TypeError, ValueError):
+                patient_sex = None
+            if patient_age is None or patient_sex not in (0, 1):
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": "Parkinson's UPDRS model requires age and sex. "
+                        "Add them in Settings before recording."
+                    },
+                )
+            test_time_days = 0.0
+            if onboarded_at:
+                try:
+                    onboarded_dt = datetime.fromisoformat(onboarded_at.replace("Z", "+00:00"))
+                    if onboarded_dt.tzinfo is not None:
+                        onboarded_dt = onboarded_dt.replace(tzinfo=None)
+                    test_time_days = max(0.0, (datetime.utcnow() - onboarded_dt).total_seconds() / 86400.0)
+                except (ValueError, TypeError):
+                    test_time_days = 0.0
+            patient_meta = {
+                "age": patient_age,
+                "sex": patient_sex,
+                "test_time_days": test_time_days,
+            }
+
         history_rows = _fetch_history_for_trends(user_id)
-        report = predict_voice(target_disease, temp_file_name)
+        report = predict_voice(target_disease, temp_file_name, patient_meta=patient_meta)
 
         bios = report.get('biomarkers', {})
         sigs = report.get('signals', {})
@@ -706,6 +744,7 @@ async def analyze_voice(
             confidence=float(report.get('confidence', 0.0)),
             speech_score=float(report.get('speech_score', 0.0)),
             breathlessness_score=float(report.get('breathlessness_score', scores["breathlessness_score"])),
+            motor_updrs=float(report["motor_updrs"]) if report.get("motor_updrs") is not None else None,
             trends=trend_info,
             analyzed_at=analyzed_at,
             db_persisted=db_saved,

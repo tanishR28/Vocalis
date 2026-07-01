@@ -9,6 +9,8 @@ export default function OnboardingPage() {
   const router = useRouter();
   const [selectedId, setSelectedId] = useState('');
   const [patientName, setPatientName] = useState('');
+  const [age, setAge] = useState('');
+  const [sex, setSex] = useState('');
   const [error, setError] = useState('');
 
   const conditions = getConditionList();
@@ -18,6 +20,8 @@ export default function OnboardingPage() {
     if (existing) {
       setSelectedId(existing.conditionId || '');
       setPatientName(existing.patientName || '');
+      if (existing.age) setAge(String(existing.age));
+      if (existing.sex === 0 || existing.sex === 1) setSex(String(existing.sex));
     }
   }, []);
 
@@ -26,8 +30,24 @@ export default function OnboardingPage() {
       setError('Please select your monitoring condition.');
       return;
     }
+    if (selectedId === 'parkinsons') {
+      const ageNum = Number(age);
+      if (!Number.isFinite(ageNum) || ageNum < 18 || ageNum > 100) {
+        setError('Please enter a valid age (18–100) for Parkinson\'s UPDRS analysis.');
+        return;
+      }
+      if (sex !== '0' && sex !== '1') {
+        setError('Please select sex (required for Parkinson\'s UPDRS model).');
+        return;
+      }
+    }
     setError('');
-    saveProfile({ conditionId: selectedId, patientName });
+    saveProfile({
+      conditionId: selectedId,
+      patientName,
+      age: age ? Number(age) : undefined,
+      sex: sex !== '' ? Number(sex) : undefined,
+    });
     router.replace('/');
   }
 
@@ -63,6 +83,42 @@ export default function OnboardingPage() {
               className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-300"
             />
           </div>
+
+          {selectedId === 'parkinsons' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="patient-age" className="block text-sm font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  Age <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="patient-age"
+                  type="number"
+                  min={18}
+                  max={100}
+                  value={age}
+                  onChange={(e) => setAge(e.target.value)}
+                  placeholder="e.g. 72"
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                />
+              </div>
+              <div>
+                <label htmlFor="patient-sex" className="block text-sm font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  Sex <span className="text-red-500">*</span>
+                </label>
+                <select
+                  id="patient-sex"
+                  value={sex}
+                  onChange={(e) => setSex(e.target.value)}
+                  className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                >
+                  <option value="">Select…</option>
+                  <option value="0">Female</option>
+                  <option value="1">Male</option>
+                </select>
+                <p className="text-xs text-slate-500 mt-1">Matches Oxford dataset encoding (0=female, 1=male).</p>
+              </div>
+            </div>
+          )}
 
           <div>
             <p className="text-sm font-bold text-slate-700 uppercase tracking-wider mb-4">

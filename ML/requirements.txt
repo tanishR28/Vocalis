@@ -8,3 +8,4 @@ joblib==1.5.3
 xgboost==2.1.4
 tensorflow==2.18.0
 soundfile==0.12.1
+praat-parselmouth==0.4.5

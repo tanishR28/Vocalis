@@ -27,6 +27,7 @@ class AnalysisResponse(BaseModel):
     signature_detected: float = Field(0.0, description="Signature detection severity")
     cough_detected: bool = Field(False, description="Asthma: cough burst signature")
     wheeze_detected: bool = Field(False, description="Asthma: wheeze signature")
+    motor_updrs: Optional[float] = Field(None, description="Parkinson's: predicted motor_UPDRS")
     health_score: int = Field(..., description="Composite health score (0-100)")
     status: str = Field(..., description="Status string (e.g. Warning, OK, Critical)")
     severity: float = Field(0.0, description="Disease severity 0-100")

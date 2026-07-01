@@ -286,6 +286,9 @@ export default function RecordPage() {
       const formData = new FormData();
       formData.append('file', wavBlob, 'recording.wav');
       formData.append('disease', selectedDisease);
+      if (profile?.age != null) formData.append('age', String(profile.age));
+      if (profile?.sex === 0 || profile?.sex === 1) formData.append('sex', String(profile.sex));
+      if (profile?.onboardedAt) formData.append('onboarded_at', profile.onboardedAt);
 
       const response = await fetch(`${API_URL}/api/analyze`, {
         method: 'POST',
@@ -445,6 +448,11 @@ export default function RecordPage() {
                       <p className="text-4xl font-black text-purple-700">{Math.round(analysisResult.severity ?? 0)}<span className="text-lg text-purple-400">/100</span></p>
                       <p className="text-lg font-bold text-purple-600">{analysisResult.stage || '—'}</p>
                       <p className="text-xs text-slate-500">Confidence {(Number(analysisResult.confidence || 0) * 100).toFixed(0)}%</p>
+                      {analysisResult.motor_updrs != null && (
+                        <p className="text-xs font-semibold text-purple-600 mt-1">
+                          Motor UPDRS: {Number(analysisResult.motor_updrs).toFixed(1)}
+                        </p>
+                      )}
                     </div>
                     <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 rounded-2xl py-6 px-4 border border-emerald-100 flex flex-col justify-center items-center shadow-inner gap-2">
                       <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-2">Diagnostic Status</p>

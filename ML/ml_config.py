@@ -28,17 +28,31 @@ TARGET_NAMES = [
     "severity", "speech_score", "breathlessness_score", "tremor_score",
 ]
 
+OXFORD_FEATURE_COLUMNS = [
+    "age", "sex", "test_time",
+    "Jitter(%)", "Jitter(Abs)", "Jitter:RAP", "Jitter:PPQ5", "Jitter:DDP",
+    "Shimmer", "Shimmer(dB)", "Shimmer:APQ3", "Shimmer:APQ5", "Shimmer:APQ11", "Shimmer:DDA",
+    "NHR", "HNR", "RPDE", "DFA", "PPE",
+]
+
 LSTM_MIN_DAYS = 7
 BASELINE_DAYS = 3
 
 
 def model_paths(condition_key: str) -> dict:
-    return {
+    paths = {
         "xgb": MODELS_DIR / f"{condition_key}_xgb.pkl",
         "scaler": MODELS_DIR / f"{condition_key}_scaler.joblib",
         "features": MODELS_DIR / f"{condition_key}_features.joblib",
         "lstm": MODELS_DIR / "parkinsons_lstm.keras",
     }
+    if condition_key == "parkinsons":
+        paths.update({
+            "updrs_xgb": MODELS_DIR / "parkinsons_xgb.joblib",
+            "updrs_features": MODELS_DIR / "parkinsons_updrs_features.joblib",
+            "updrs_scale": MODELS_DIR / "parkinsons_updrs_scale.json",
+        })
+    return paths
 
 
 def dataset_path(condition_key: str) -> Path:

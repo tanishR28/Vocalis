@@ -10,6 +10,8 @@ export default function SettingsPage() {
   const router = useRouter();
   const conditions = getConditionList();
   const [patientName, setPatientName] = useState('');
+  const [age, setAge] = useState('');
+  const [sex, setSex] = useState('');
   const [conditionId, setConditionId] = useState('');
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -19,6 +21,8 @@ export default function SettingsPage() {
     if (!profile) return;
     setPatientName(profile.patientName || '');
     setConditionId(profile.conditionId || '');
+    if (profile.age) setAge(String(profile.age));
+    if (profile.sex === 0 || profile.sex === 1) setSex(String(profile.sex));
   }, []);
 
   const selected = getCondition(conditionId);
@@ -28,8 +32,24 @@ export default function SettingsPage() {
       setError('Please select a monitoring condition.');
       return;
     }
+    if (conditionId === 'parkinsons') {
+      const ageNum = Number(age);
+      if (!Number.isFinite(ageNum) || ageNum < 18 || ageNum > 100) {
+        setError('Valid age (18–100) is required for Parkinson\'s UPDRS analysis.');
+        return;
+      }
+      if (sex !== '0' && sex !== '1') {
+        setError('Sex is required for Parkinson\'s UPDRS analysis.');
+        return;
+      }
+    }
     setError('');
-    updateProfile({ conditionId, patientName });
+    updateProfile({
+      conditionId,
+      patientName,
+      age: age ? Number(age) : undefined,
+      sex: sex !== '' ? Number(sex) : undefined,
+    });
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   }
@@ -59,6 +79,39 @@ export default function SettingsPage() {
             placeholder="e.g. Tanish"
             className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="settings-age" className="block text-sm font-bold text-slate-700 mb-2">
+              Age {conditionId === 'parkinsons' ? '(required for UPDRS)' : '(optional)'}
+            </label>
+            <input
+              id="settings-age"
+              type="number"
+              min={18}
+              max={100}
+              value={age}
+              onChange={(e) => { setAge(e.target.value); setSaved(false); }}
+              placeholder="e.g. 72"
+              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+          <div>
+            <label htmlFor="settings-sex" className="block text-sm font-bold text-slate-700 mb-2">
+              Sex {conditionId === 'parkinsons' ? '(required)' : '(optional)'}
+            </label>
+            <select
+              id="settings-sex"
+              value={sex}
+              onChange={(e) => { setSex(e.target.value); setSaved(false); }}
+              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              <option value="">Select…</option>
+              <option value="0">Female</option>
+              <option value="1">Male</option>
+            </select>
+          </div>
         </div>
 
         <div>
