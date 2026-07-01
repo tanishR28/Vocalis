@@ -1,6 +1,8 @@
 'use client';
 import Link from 'next/link';
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { getCondition } from '../lib/conditions';
+import { getProfile } from '../lib/profile';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -126,10 +128,14 @@ export default function DashboardPage() {
   const [isReportUploading, setIsReportUploading] = useState(false);
   const [reportImportResult, setReportImportResult] = useState(null);
   const [reportError, setReportError] = useState('');
+  const [profile, setProfile] = useState(null);
   const reportFileInputRef = useRef(null);
+
+  const condition = profile ? getCondition(profile.conditionId) : null;
 
   useEffect(() => {
     setMounted(true);
+    setProfile(getProfile());
     const stored = localStorage.getItem('vocalis_latest_analysis');
     if (stored) {
       try {
@@ -211,6 +217,11 @@ export default function DashboardPage() {
   const areaPath = buildAreaPath(linePath);
   const latestScore = latestHistory ? Number(latestHistory.health_score?.score || 0) : null;
   const overallScore = latestScore ?? (analysisData ? Number(analysisData.health_score || 92) : 92);
+  const trendInfo = analysisData?.trends || null;
+  const trendLabel = trendInfo?.trend || (trendScores.length >= 2 && trendScores[trendScores.length - 1] >= trendScores[0] ? 'improving' : 'stable');
+  const vsBaseline = trendInfo?.vs_baseline;
+  const weeklyPct = trendInfo?.weekly_change_pct;
+  const parkinsonForecast = profile?.conditionId === 'parkinsons' ? trendInfo?.forecast : null;
 
   const latestBiomarkerRows = historyItems.slice(0, 20).map((item) => item.biomarkers || {});
   const breathValues = latestBiomarkerRows
@@ -229,6 +240,40 @@ export default function DashboardPage() {
   const breathStability = clamp(Math.round(100 - breathAvg * 100), 0, 100);
   const speechConsistencyLabel = speechAvg >= 2.8 ? 'High' : speechAvg >= 1.8 ? 'Moderate' : 'Low';
   const tremorLabel = tremorAvg <= 0.2 ? 'Low' : tremorAvg <= 0.5 ? 'Moderate' : 'High';
+
+  function metricDisplay(card) {
+    const rows = latestBiomarkerRows;
+    const values = rows
+      .map((row) => {
+        let val = Number(row[card.field]);
+        if (!Number.isFinite(val) && card.fallback) val = Number(row[card.fallback]);
+        if (!Number.isFinite(val)) return null;
+        if (card.combine) {
+          const extra = Number(row[card.combine]);
+          if (Number.isFinite(extra)) val = (val + extra) / 2;
+        }
+        return val;
+      })
+      .filter((v) => v !== null);
+    const mean = average(values);
+    if (card.id === 'breath') {
+      return { label: card.label, value: `${clamp(Math.round(100 - mean * 100), 0, 100)}%`, icon: card.icon };
+    }
+    if (card.id === 'speech') {
+      const label = mean >= 2.8 ? 'High' : mean >= 1.8 ? 'Moderate' : 'Low';
+      return { label: card.label, value: label, icon: card.icon };
+    }
+    if (card.id === 'tremor' || card.id === 'jitter' || card.id === 'pause') {
+      const label = mean <= 0.2 ? 'Low' : mean <= 0.5 ? 'Moderate' : 'High';
+      return { label: card.label, value: label, icon: card.icon };
+    }
+    if (card.id === 'pitch') {
+      return { label: card.label, value: mean.toFixed(2), icon: card.icon };
+    }
+    return { label: card.label, value: mean.toFixed(2), icon: card.icon };
+  }
+
+  const dashboardMetrics = (condition?.metricCards || []).map(metricDisplay);
 
   const calendarCounts = useMemo(() => {
     const counts = {};
@@ -300,169 +345,96 @@ export default function DashboardPage() {
           border-color: #e5e7eb;
         }
       `}} />
-      <aside className="h-screen w-64 fixed left-0 top-0 border-r border-slate-100 bg-slate-50 flex flex-col p-4 gap-2 z-40 hidden md:flex">
-        <div className="flex items-center gap-3 px-2 py-6">
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shadow-md">
-            <span className="material-symbols-outlined text-white" style={{ fontVariationSettings: "'FILL' 1" }}>voice_selection</span>
-          </div>
-          <div>
-            <div className="text-blue-700 font-extrabold font-headline text-lg tracking-tight">Vocalis AI</div>
-            <div className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Clinical Grade</div>
-          </div>
-        </div>
-        <nav className="flex-1 space-y-1">
-          <Link href="/" className="group flex items-center gap-3 px-4 py-3 bg-white text-blue-700 rounded-xl shadow-sm border border-gray-100 font-headline text-sm font-medium transition-all duration-300">
-            <span className="material-symbols-outlined scale-110 transition-transform text-blue-600" style={{ fontVariationSettings: "'FILL' 1" }}>dashboard</span>
-            <span>Dashboard</span>
-          </Link>
-          <Link href="/record" className="group flex items-center gap-3 px-4 py-3 text-slate-500 hover:bg-slate-100 hover:text-blue-600 rounded-xl font-headline text-sm font-medium transition-all duration-300">
-            <span className="material-symbols-outlined group-hover:scale-110 transition-transform">mic</span>
-            <span>Record</span>
-          </Link>
-          <Link href="/history" className="group flex items-center gap-3 px-4 py-3 text-slate-500 hover:bg-slate-100 hover:text-blue-600 rounded-xl font-headline text-sm font-medium transition-all duration-300">
-            <span className="material-symbols-outlined group-hover:scale-110 transition-transform">history</span>
-            <span>History</span>
-          </Link>
-          <Link href="/insights" className="group flex items-center gap-3 px-4 py-3 text-slate-500 hover:bg-slate-100 hover:text-blue-600 rounded-xl font-headline text-sm font-medium transition-all duration-300">
-            <span className="material-symbols-outlined group-hover:scale-110 transition-transform">analytics</span>
-            <span>Insights</span>
-          </Link>
-          <button className="group w-full flex flex-row items-center gap-3 px-4 py-3 text-slate-500 hover:bg-slate-100 hover:text-blue-600 rounded-xl font-headline text-sm font-medium transition-all duration-300">
-            <span className="material-symbols-outlined group-hover:scale-110 transition-transform">settings</span>
-            <span>Settings</span>
-          </button>
-        </nav>
-        <div className="mt-auto space-y-1 pt-4 border-t border-slate-200/50">
-          <Link href="/record">
-            <button className="w-full flex items-center gap-3 px-4 py-3 mb-4 bg-gradient-to-r from-primary to-blue-500 text-white rounded-xl shadow-[0_4px_14px_0_rgba(0,86,187,0.25)] hover:shadow-[0_6px_20px_rgba(0,86,187,0.35)] hover:-translate-y-0.5 font-semibold text-sm transition-all duration-300 active:scale-95">
-              <span className="material-symbols-outlined font-light">add</span>
-              <span>New Recording</span>
-            </button>
-          </Link>
-        </div>
-      </aside>
-
-      <main className="flex-1 md:ml-64 min-h-screen flex flex-col">
-        <header className="bg-white/70 backdrop-blur-xl sticky top-0 z-50 flex justify-between items-center w-full px-6 py-4 border-b border-gray-100/50 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.02)]">
-          <div className="flex items-center gap-4">
-             <h1 className="text-xl font-bold bg-gradient-to-r from-blue-700 to-blue-500 bg-clip-text text-transparent font-headline tracking-tight">Vocalis Health</h1>
-          </div>
-          <div className="hidden lg:flex items-center gap-8 group">
-            <Link href="/" className="relative text-blue-700 font-headline tracking-tight font-semibold py-1">
-               Dashboard
-               <span className="absolute bottom-0 left-0 w-full h-[2px] bg-blue-600 rounded-t-full"></span>
-            </Link>
-            <Link href="/history" className="relative text-slate-500 hover:text-blue-600 font-headline tracking-tight font-semibold py-1 transition-colors group/link">
-               History
-               <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-blue-600 rounded-t-full transition-all duration-300 group-hover/link:w-full"></span>
-            </Link>
-            <Link href="/insights" className="relative text-slate-500 hover:text-blue-600 font-headline tracking-tight font-semibold py-1 transition-colors group/link">
-               Insights
-               <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-blue-600 rounded-t-full transition-all duration-300 group-hover/link:w-full"></span>
-            </Link>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <button
-                onClick={() => setShowCalendar((prev) => !prev)}
-                className="p-2 text-slate-500 hover:text-primary transition-colors hover:bg-slate-50 rounded-full"
-                aria-label="Open activity calendar"
-              >
-                <span className="material-symbols-outlined">calendar_month</span>
-              </button>
-
-              {showCalendar && (
-                <div
-                  className="absolute right-0 mt-2 bg-white border border-slate-200 rounded-2xl shadow-xl p-4 z-50"
-                  style={{ width: '340px', maxWidth: 'calc(100vw - 2rem)' }}
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <button
-                      onClick={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}
-                      className="p-1 rounded-lg hover:bg-slate-100"
-                      aria-label="Previous month"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">chevron_left</span>
-                    </button>
-                    <p className="text-sm font-bold text-slate-700">
-                      {new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(calendarMonth)}
-                    </p>
-                    <button
-                      onClick={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}
-                      className="p-1 rounded-lg hover:bg-slate-100"
-                      aria-label="Next month"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">chevron_right</span>
-                    </button>
-                  </div>
-
-                  <div
-                    className="text-[11px] font-bold text-slate-400 mb-2"
-                    style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}
-                  >
-                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
-                      <div key={day} className="text-center py-1">{day}</div>
-                    ))}
-                  </div>
-
-                  <div
-                    className="gap-1"
-                    style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}
-                  >
-                    {calendarCells.map((dateCell, index) => {
-                      if (!dateCell) {
-                        return <div key={`empty-${index}`} className="h-10"></div>;
-                      }
-                      const key = toDayKey(dateCell.toISOString());
-                      const count = key ? (calendarCounts[key] || 0) : 0;
-                      const isToday = dateCell.toDateString() === today.toDateString();
-                      return (
-                        <div
-                          key={key || index}
-                          className={`h-10 rounded-lg border flex flex-col items-center justify-center text-xs ${isToday ? 'bg-emerald-100 border-emerald-300 text-emerald-800 ring-2 ring-emerald-300/70' : count > 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-500'}`}
-                        >
-                          <span className="font-semibold leading-none">{dateCell.getDate()}</span>
-                          {count > 0 ? <span className="text-[10px] font-extrabold text-emerald-700">{count}</span> : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="mt-3 text-xs text-slate-700 bg-emerald-50 rounded-lg px-3 py-2 border border-emerald-100">
-                    Sessions this month: <span className="font-bold text-emerald-700">{monthSessionCount}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <button className="p-2 text-slate-500 hover:text-primary transition-colors hover:bg-slate-50 rounded-full">
-              <span className="material-symbols-outlined">notifications</span>
-            </button>
-            <div className="ml-2 w-10 h-10 rounded-full border-2 border-primary-fixed overflow-hidden shadow-sm hover:shadow-md transition-shadow cursor-pointer">
-              <img alt="Clinical Professional Profile" className="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8qfaQUay-o15of8zqC7rI2E0u8vLHuiV1fCLVM4b4gXDDbyh_2-Hv1ghcN0iBWYL_6uFc5AF-972zayFUG_yvQjK_Kl3nTo-aOVajjDOCIxvOdZ-kj5WKTYHMNnXn5EtyOd0Z94WLVo0mDYzYR2_Tyx4JCTSbhIzWjCe4E_zRJIbziviGw8_a-n_a8tA0WctFhIgP3Y1cmuWGP8ghFW6RjpJrbi2KWhDSPXXdkeAuwmy-R1Mo5BVB7VDjwcY110_QWxzhKyMJ4wB_" />
-            </div>
-          </div>
-        </header>
-
-        <div className="p-6 md:p-10 max-w-7xl mx-auto w-full space-y-10">
+      <div className="p-6 md:p-8 max-w-7xl mx-auto w-full space-y-8">
           <section className="flex flex-col md:flex-row md:items-end justify-between gap-6">
             <div className="space-y-2">
-              <h2 className="text-4xl font-extrabold text-on-surface tracking-tight font-headline">Good Morning, Mr Tanish</h2>
-              <p className="text-on-surface-variant text-[17px] font-medium opacity-90">Your vocal health profile is updated based on your last 7 assessments.</p>
+              <h2 className="text-4xl font-extrabold text-on-surface tracking-tight font-headline">
+                Good Morning, {profile?.patientName || 'there'}
+              </h2>
+              <p className="text-on-surface-variant text-[17px] font-medium opacity-90">
+                {condition
+                  ? `${condition.label} monitoring — ${condition.dashboardSubtitle}`
+                  : 'Your vocal health profile is updated based on your last assessments.'}
+              </p>
             </div>
             
             <div className="flex flex-col items-center md:items-end gap-2">
-              <Link href="/record">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCalendar((prev) => !prev)}
+                  className="p-2.5 text-slate-500 hover:text-primary hover:bg-slate-100 rounded-xl border border-slate-200 bg-white transition-colors"
+                  aria-label="Activity calendar"
+                >
+                  <span className="material-symbols-outlined text-[20px]">calendar_month</span>
+                </button>
+                <Link href="/record">
                 <button className="flex items-center justify-center gap-3 bg-gradient-to-r from-primary to-blue-600 text-white px-8 py-5 rounded-[18px] shadow-lg shadow-primary/30 hover:-translate-y-1 hover:shadow-[0_8px_25px_rgba(0,86,187,0.35)] hover:scale-[1.02] transition-all duration-300 ease-out group border border-blue-500/50">
                   <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform shadow-inner">
                     <span className="material-symbols-outlined text-white animate-[pulse_2s_ease-in-out_infinite]" style={{ fontVariationSettings: "'FILL' 1" }}>mic</span>
                   </div>
                   <span className="text-lg font-bold tracking-wide">Record Today's Voice</span>
                 </button>
-              </Link>
-              <span className="text-[13px] font-semibold tracking-wide text-slate-400 mr-2">15-sec daily check</span>
+                </Link>
+              </div>
+              <span className="text-[13px] font-semibold tracking-wide text-slate-400 mr-2">
+                {condition ? `${condition.recordingSeconds}-sec daily check` : '15-sec daily check'}
+              </span>
             </div>
           </section>
+
+          {showCalendar && (
+            <section className="bg-white border border-slate-200 rounded-[18px] p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <button
+                  type="button"
+                  onClick={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}
+                  className="p-1 rounded-lg hover:bg-slate-100"
+                  aria-label="Previous month"
+                >
+                  <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+                </button>
+                <p className="text-sm font-bold text-slate-700">
+                  {new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(calendarMonth)}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}
+                  className="p-1 rounded-lg hover:bg-slate-100"
+                  aria-label="Next month"
+                >
+                  <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+                </button>
+              </div>
+              <div className="text-[11px] font-bold text-slate-400 mb-2 grid grid-cols-7">
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                  <div key={day} className="text-center py-1">{day}</div>
+                ))}
+              </div>
+              <div className="grid grid-cols-7 gap-1">
+                {calendarCells.map((dateCell, index) => {
+                  if (!dateCell) {
+                    return <div key={`empty-${index}`} className="h-10" />;
+                  }
+                  const key = toDayKey(dateCell.toISOString());
+                  const count = key ? (calendarCounts[key] || 0) : 0;
+                  const isToday = dateCell.toDateString() === today.toDateString();
+                  return (
+                    <div
+                      key={key || index}
+                      className={`h-10 rounded-lg border flex flex-col items-center justify-center text-xs ${isToday ? 'bg-emerald-100 border-emerald-300 text-emerald-800' : count > 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-500'}`}
+                    >
+                      <span className="font-semibold leading-none">{dateCell.getDate()}</span>
+                      {count > 0 ? <span className="text-[10px] font-extrabold text-emerald-700">{count}</span> : null}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-3 text-xs text-slate-700 bg-emerald-50 rounded-lg px-3 py-2 border border-emerald-100">
+                Sessions this month: <span className="font-bold text-emerald-700">{monthSessionCount}</span>
+              </p>
+            </section>
+          )}
 
           <section className="bg-white border border-slate-200 rounded-[18px] p-6 shadow-sm">
             <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-5">
@@ -556,7 +528,7 @@ export default function DashboardPage() {
                 {structuredReport?.rows?.length ? (
                   <div className="rounded-xl border border-slate-200 overflow-hidden">
                     <div className="bg-slate-50 border-b border-slate-200 px-4 py-3 text-sm font-bold text-slate-700">
-                      Extracted Rows From PDF ({structuredReport.rows.length})
+                      Analysed Patient's health history from reports ({structuredReport.rows.length})
                     </div>
                     <div className="max-h-[340px] overflow-auto">
                       <table className="w-full text-sm">
@@ -626,12 +598,32 @@ export default function DashboardPage() {
               </div>
               
               <div className="mt-8 flex flex-col items-center gap-1">
-                 <span className="flex items-center gap-1 text-secondary font-bold text-sm bg-secondary/10 px-3 py-1 rounded-full">
-                    <span className="material-symbols-outlined text-[16px]">trending_up</span> Improving this week
+                 <span className={`flex items-center gap-1 font-bold text-sm px-3 py-1 rounded-full ${
+                   trendLabel === 'improving' ? 'text-secondary bg-secondary/10' :
+                   trendLabel === 'declining' ? 'text-error bg-error-container' :
+                   'text-slate-600 bg-slate-100'
+                 }`}>
+                    <span className="material-symbols-outlined text-[16px]">
+                      {trendLabel === 'improving' ? 'trending_up' : trendLabel === 'declining' ? 'trending_down' : 'trending_flat'}
+                    </span>
+                    {trendLabel === 'improving' ? 'Improving this week' : trendLabel === 'declining' ? 'Declining this week' : 'Stable this week'}
                  </span>
                  <p className="mt-4 text-on-surface-variant font-medium text-sm leading-relaxed max-w-[250px]">
-                   Your vocal stability is <span className="text-secondary font-bold">8% higher</span> than the clinical baseline.
+                   {trendInfo?.baseline_ready && vsBaseline != null ? (
+                     <>Your vocal stability is <span className={`font-bold ${vsBaseline >= 0 ? 'text-secondary' : 'text-error'}`}>{Math.abs(vsBaseline).toFixed(0)}% {vsBaseline >= 0 ? 'higher' : 'lower'}</span> than your clinical baseline.</>
+                   ) : trendInfo?.weekly_ready && weeklyPct != null ? (
+                     <>Weekly change: <span className="font-bold text-primary">{weeklyPct >= 0 ? '+' : ''}{weeklyPct.toFixed(1)}%</span></>
+                   ) : (
+                     <>Record at least 3 sessions to unlock baseline trends.</>
+                   )}
                  </p>
+                 {parkinsonForecast && (
+                   <div className="mt-4 p-4 rounded-xl bg-primary/5 border border-primary/20 text-center max-w-[280px]">
+                     <p className="text-xs font-bold text-primary uppercase tracking-wider mb-2">7-Day Forecast</p>
+                     <p className="text-sm text-slate-700">Severity ~<span className="font-bold">{Math.round(parkinsonForecast.severity_7d)}</span>/100</p>
+                     <p className="text-xs text-slate-500 mt-1">Stability {(Number(parkinsonForecast.stability_score || 0) * 100).toFixed(0)}%</p>
+                   </div>
+                 )}
               </div>
             </div>
 
@@ -645,9 +637,11 @@ export default function DashboardPage() {
                   <p className="text-slate-500 font-medium text-sm mt-1">Historical data from the last {trendRange === 'week' ? 7 : 30} sessions</p>
                   <div className="mt-4 flex items-center p-3 rounded-xl bg-blue-50/70 border border-blue-100/50 w-fit">
                     <p className="text-xs font-semibold text-blue-800 leading-tight">
-                      {trendScores.length >= 2 && trendScores[trendScores.length - 1] >= trendScores[0]
+                      {trendLabel === 'improving'
                         ? 'Your voice stability trend is improving in the selected range.'
-                        : 'Your voice stability trend needs monitoring in the selected range.'}
+                        : trendLabel === 'declining'
+                        ? 'Your voice stability trend is declining — consider reviewing with your care team.'
+                        : 'Your voice stability trend is stable in the selected range.'}
                     </p>
                   </div>
                 </div>
@@ -718,79 +712,22 @@ export default function DashboardPage() {
             </div>
 
             <div className="lg:col-span-12 grid grid-cols-1 md:grid-cols-3 gap-8">
-              <div className="bg-surface-container-lowest p-6 rounded-[18px] hover-lift shadow-sm border border-gray-200 flex flex-col gap-4 relative overflow-hidden group">
-                <div className="absolute inset-0 bg-gradient-to-tr from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                <div className="flex flex-wrap justify-between items-start relative z-10 gap-3">
-                  <div className="w-12 h-12 rounded-[14px] bg-primary/10 flex items-center justify-center text-primary transition-transform group-hover:scale-110">
-                    <span className="material-symbols-outlined font-light">air</span>
+              {dashboardMetrics.map((metric, index) => (
+                <div
+                  key={metric.label}
+                  className="bg-surface-container-lowest p-6 rounded-[18px] hover-lift shadow-sm border border-gray-200 flex flex-col gap-4 relative overflow-hidden group"
+                >
+                  <div className="flex flex-wrap justify-between items-start relative z-10 gap-3">
+                    <div className="w-12 h-12 rounded-[14px] bg-primary/10 flex items-center justify-center text-primary transition-transform group-hover:scale-110">
+                      <span className="material-symbols-outlined font-light">{metric.icon}</span>
+                    </div>
                   </div>
-                  <span className="text-[11px] font-extrabold text-secondary flex items-center gap-0.5 bg-secondary/10 px-2 py-1 rounded-lg">
-                    <span className="material-symbols-outlined text-[14px]">arrow_upward</span> 2.4%
-                  </span>
-                </div>
-                <div className="relative z-10">
-                  <p className="text-slate-500 text-sm font-semibold mb-1">Breath Stability</p>
-                  <h4 className="text-3xl font-extrabold font-headline text-slate-900 tracking-tight">
-                    {breathStability}%
-                  </h4>
-                </div>
-                <div className="w-full bg-slate-100 h-[6px] rounded-full overflow-hidden mt-2 relative z-10">
-                  <div className="bg-primary h-full rounded-full shadow-[0_0_8px_rgba(0,86,187,0.5)]" style={{ width: `${breathStability}%` }}></div>
-                </div>
-              </div>
-
-              <div className="bg-surface-container-lowest p-6 rounded-[18px] hover-lift shadow-sm border border-gray-200 flex flex-col gap-4 relative overflow-hidden group">
-                <div className="absolute inset-0 bg-gradient-to-tr from-secondary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                <div className="flex flex-wrap justify-between items-start relative z-10 gap-3">
-                  <div className="w-12 h-12 rounded-[14px] bg-secondary/10 flex items-center justify-center text-secondary transition-transform group-hover:scale-110">
-                    <span className="material-symbols-outlined font-light">graphic_eq</span>
+                  <div className="relative z-10">
+                    <p className="text-slate-500 text-sm font-semibold mb-1">{metric.label}</p>
+                    <h4 className="text-3xl font-extrabold font-headline text-slate-900 tracking-tight">{metric.value}</h4>
                   </div>
-                  <span className="flex items-center gap-1 text-[11px] font-extrabold text-secondary bg-secondary/10 px-2 py-1 rounded-lg uppercase tracking-wider">
-                     Optimal <span className="material-symbols-outlined text-[12px]">keyboard_double_arrow_down</span>
-                  </span>
                 </div>
-                <div className="relative z-10">
-                  <p className="text-slate-500 text-sm font-semibold mb-1">Voice Tremor</p>
-                  <h4 className="text-3xl font-extrabold font-headline text-slate-900 tracking-tight">
-                    {tremorLabel}
-                  </h4>
-                </div>
-                <div className="flex gap-1.5 items-end h-[14px] mt-2 relative z-10">
-                  <div className="flex-1 bg-secondary hover:bg-secondary-container h-[40%] rounded-full transition-colors"></div>
-                  <div className="flex-1 bg-secondary hover:bg-secondary-container h-[30%] rounded-full transition-colors"></div>
-                  <div className="flex-1 bg-secondary hover:bg-secondary-container h-[50%] rounded-full transition-colors"></div>
-                  <div className="flex-1 bg-secondary hover:bg-secondary-container h-[20%] rounded-full transition-colors"></div>
-                  <div className="flex-1 bg-slate-200 h-[80%] rounded-full"></div>
-                  <div className="flex-1 bg-slate-200 h-[100%] rounded-full"></div>
-                </div>
-              </div>
-
-              <div className="bg-surface-container-lowest p-6 rounded-[18px] hover-lift shadow-sm border border-gray-200 flex flex-col gap-4 relative overflow-hidden group">
-                <div className="absolute inset-0 bg-gradient-to-tr from-blue-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                <div className="flex flex-wrap justify-between items-start relative z-10 gap-3">
-                  <div className="w-12 h-12 rounded-[14px] bg-blue-100/50 flex items-center justify-center text-blue-600 transition-transform group-hover:scale-110">
-                    <span className="material-symbols-outlined font-light">analytics</span>
-                  </div>
-                  <span className="px-2.5 py-1 bg-blue-50 border border-blue-100 text-blue-700 text-[10px] font-extrabold rounded-lg uppercase tracking-wider flex items-center gap-1">
-                     <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse"></span>
-                     High Grade
-                  </span>
-                </div>
-                <div className="relative z-10">
-                  <p className="text-slate-500 text-sm font-semibold mb-1">Speech Consistency</p>
-                  <h4 className="text-3xl font-extrabold font-headline text-slate-900 tracking-tight">
-                    {speechConsistencyLabel}
-                  </h4>
-                </div>
-                <div className="flex items-center gap-3 mt-2 relative z-10">
-                  <div className="flex -space-x-2">
-                    <div className="w-6 h-6 rounded-full bg-blue-400 border-2 border-white shadow-sm ring-1 ring-black/5"></div>
-                    <div className="w-6 h-6 rounded-full bg-blue-500 border-2 border-white shadow-sm ring-1 ring-black/5"></div>
-                    <div className="w-6 h-6 rounded-full bg-blue-600 border-2 border-white shadow-sm ring-1 ring-black/5"></div>
-                  </div>
-                  <span className="text-xs font-semibold text-slate-400">Match 95% peers</span>
-                </div>
-              </div>
+              ))}
             </div>
 
             <div className="lg:col-span-12">
@@ -844,34 +781,6 @@ export default function DashboardPage() {
              </div>
           </div>
         </div>
-
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-gray-200/50 px-6 py-4 flex justify-between items-center z-50 shadow-[0_-10px_20px_rgba(0,0,0,0.03)]">
-          <Link href="/" className="flex flex-col items-center gap-1 text-primary relative">
-            <span className="absolute -top-4 w-8 h-[3px] bg-primary rounded-b-full"></span>
-            <span className="material-symbols-outlined scale-110" style={{ fontVariationSettings: "'FILL' 1" }}>dashboard</span>
-            <span className="text-[10px] font-bold">Dash</span>
-          </Link>
-          <Link href="/record" className="flex flex-col items-center gap-1 text-slate-400 hover:text-slate-700 transition-colors">
-            <span className="material-symbols-outlined">mic</span>
-            <span className="text-[10px] font-bold">Record</span>
-          </Link>
-          <div className="relative -top-8 group">
-            <Link href="/record">
-              <button className="w-14 h-14 bg-gradient-to-tr from-primary to-blue-500 text-white rounded-full shadow-[0_8px_20px_rgba(0,86,187,0.3)] flex items-center justify-center transition-transform hover:scale-105 active:scale-95 border-4 border-white">
-                <span className="material-symbols-outlined text-3xl font-light group-hover:animate-pulse">add</span>
-              </button>
-            </Link>
-          </div>
-          <Link href="/insights" className="flex flex-col items-center gap-1 text-slate-400 hover:text-slate-700 transition-colors">
-            <span className="material-symbols-outlined">analytics</span>
-            <span className="text-[10px] font-bold">Insights</span>
-          </Link>
-          <button className="flex flex-col items-center gap-1 text-slate-400 hover:text-slate-700 transition-colors">
-            <span className="material-symbols-outlined">settings</span>
-            <span className="text-[10px] font-bold">Settings</span>
-          </button>
-        </nav>
-      </main>
     </>
   );
 }

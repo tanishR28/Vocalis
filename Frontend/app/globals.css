@@ -1,6 +1,20 @@
-@import "../out.css";
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+@source "../app/**/*.{js,jsx}";
+@source "../components/**/*.{js,jsx}";
+@source "../lib/**/*.{js,jsx}";
 
 @layer base {
+  :root {
+    --background: #f7f9fc;
+    --foreground: #191c1e;
+  }
+
+  body {
+    @apply bg-background text-on-surface font-body antialiased;
+  }
+
   .material-symbols-outlined {
     font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
   }
@@ -26,6 +40,11 @@
   .waveform-bar {
     transition: height 0.1s ease;
   }
-  .no-scrollbar::-webkit-scrollbar { display: none; }
-  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 }

@@ -1,175 +1,176 @@
 # VocalHealth AI — Voice Biomarker Disease Tracking
 
-An AI-powered **Voice Diary** application that enables patients to record daily 15-second voice samples and automatically analyze vocal biomarkers to track disease progression between clinical visits.
+An AI-powered **Voice Diary** application that enables patients to record daily voice samples and automatically analyze vocal biomarkers to track disease progression between clinical visits.
 
-## 🏗️ Architecture
+## Architecture
 
 ```
-┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
-│   Next.js       │      │    FastAPI       │      │   Supabase      │
-│   Frontend      │─────▶│    Backend       │─────▶│   Database      │
-│   (Port 3000)   │      │   (Port 8000)    │      │   + Storage     │
-└─────────────────┘      └─────────────────┘      └─────────────────┘
-       │                        │
-       │                  ┌─────┴─────┐
-       │                  │ ML Pipeline│
-       │                  ├───────────┤
-       │                  │ • Librosa │
-       │                  │ • Sklearn │
-       │                  │ • NoiseRed│
-       │                  └───────────┘
+frontend/          Next.js app (UI)
+backend/           FastAPI API layer
+ML/                Feature extraction + XGBoost inference (see ML/TRAINING.md)
+supabase_schema.sql PostgreSQL schema
 ```
 
-## ✨ Features
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Frontend   │────▶│   FastAPI   │────▶│  Supabase   │
+│  (Next.js)  │     │   backend   │     │  PostgreSQL │
+└─────────────┘     └──────┬──────┘     └─────────────┘
+                           │
+                    ┌──────▼──────┐
+                    │  ML/        │
+                    │  inference  │
+                    └─────────────┘
+```
 
-- **🎤 Voice Recording** — 15-second recording with real-time waveform visualization
-- **🧠 AI Analysis** — 12+ vocal biomarkers extracted using open-source ML
-- **📊 Dashboard** — Interactive charts tracking health trends over time
-- **⚠️ Smart Alerts** — Anomaly detection with severity-based notifications
-- **📋 History** — Timeline of all recordings with expandable details
-- **🔒 Privacy** — All processing done locally, no third-party paid APIs
+## Features
 
-## 🏥 Tracked Biomarkers
+- **Voice recording** — 15-second daily samples with disease-specific prompts
+- **ML analysis** — librosa features + XGBoost per disease (+ optional Parkinson LSTM forecast)
+- **Dashboard** — trends, calendar, assessment history (`/`)
+- **Insights** — biomarker charts from saved assessments (`/insights`)
+- **History** — timeline of voice analyses (`/history`)
+- **Medical record import** — optional PDF/image import for demo datasets
 
-| Biomarker | Method | Clinical Relevance |
-|-----------|--------|-------------------|
-| Voice Tremor | Amplitude modulation analysis | Parkinson's, neurological disorders |
-| Breathlessness | Spectral centroid, HNR | Asthma, cardiovascular disease |
-| Pitch (F0) | pyin fundamental frequency | Vocal cord issues, hormonal changes |
-| Speech Rate | Onset-based syllable detection | Cognitive decline, depression |
-| Pause Patterns | Energy-based silence detection | Breathlessness, cognitive changes |
-| Jitter | Pitch perturbation | Voice pathology |
-| Shimmer | Amplitude perturbation | Vocal fold closure issues |
-| HNR | Autocorrelation | General voice quality |
-| MFCCs | Mel-frequency cepstral coefficients | Feature fingerprinting |
-
-## 🚀 Quick Start
+## Quick start
 
 ### Prerequisites
-- **Node.js** 18+ & npm
-- **Python** 3.10+
-- **Supabase** account (free tier works)
 
-### 1. Backend Setup
+- Node.js 18+
+- Python 3.10+
+- Supabase project (optional, for persistence)
+
+### 1. Train ML models (local — not committed to git)
+
+See **[ML/TRAINING.md](ML/TRAINING.md)** for full detail. Short version:
+
+```bash
+cd ML
+python -m venv venv && venv\Scripts\activate   # Windows
+pip install -r requirements.txt
+python datasets/generate.py                    # or place your own CSVs
+python training/train_parkinsons.py
+python training/train_depression.py
+python training/train_asthma.py
+python training/train_lstm_parkinsons.py       # optional
+```
+
+Outputs go to `ML/models/` as `*.pkl`, `*.joblib`, `parkinsons_lstm.keras`.
+
+### 2. Backend
 
 ```bash
 cd backend
-
-# Create virtual environment
 python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # macOS/Linux
-
-# Install dependencies
+venv\Scripts\activate
 pip install -r requirements.txt
-
-# Configure environment
-# Copy backend/.env.example to backend/.env and set Supabase values
-
-# Start the server
+copy .env.example .env
 uvicorn main:app --reload --port 8000
 ```
 
-### 2. Frontend Setup
+Set in `backend/.env`:
+
+```bash
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+CORS_ORIGINS=http://localhost:3000
+```
+
+### 3. Frontend
 
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Configure environment
-# Edit .env.local with your Supabase credentials
-
-# Start dev server
+copy .env.example .env.local
 npm run dev
 ```
 
-### 3. Database Setup
+Set in `frontend/.env.local`:
 
-1. Create a new Supabase project at [supabase.com](https://supabase.com)
-2. Go to SQL Editor and run `supabase_schema.sql`
-3. If the API still does not see new tables, run this once in SQL Editor:
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+```
+
+### 4. Database
+
+Run `supabase_schema.sql` in the Supabase SQL editor, then:
 
 ```sql
 NOTIFY pgrst, 'reload schema';
 ```
 
-4. Configure frontend keys in `frontend/.env.local`
-5. Configure backend keys in `backend/.env`:
-
-```bash
-SUPABASE_URL=https://your-project-ref.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-```
-
-### 4. Open the App
-
-Visit `http://localhost:3000` in your browser!
-
-## 🛠️ Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Frontend | Next.js 15, React, Recharts, Framer Motion |
-| Backend | FastAPI, Python |
-| AI/ML | Librosa, scikit-learn, noisereduce, SciPy |
-| Database | Supabase (PostgreSQL) |
-| Styling | Vanilla CSS (dark theme, glassmorphism) |
-
-## 📁 Project Structure
+## Project structure
 
 ```
-├── backend/
-│   ├── main.py                 # FastAPI entry point
-│   ├── requirements.txt        # Python dependencies
-│   ├── routers/
-│   │   └── analysis.py         # API endpoints
-│   ├── services/
-│   │   ├── audio_processor.py  # Preprocessing pipeline
-│   │   ├── feature_extractor.py # Biomarker extraction
-│   │   └── ml_model.py         # Anomaly detection & scoring
-│   └── models/
-│       └── schemas.py          # Pydantic data models
+VoiceAi/
 ├── frontend/
 │   ├── app/
-│   │   ├── page.js             # Landing page
-│   │   ├── record/page.js      # Voice recording page
-│   │   ├── dashboard/page.js   # Progress tracking
-│   │   ├── history/page.js     # Recording timeline
-│   │   ├── globals.css         # Design system
-│   │   └── components/
-│   │       ├── Navbar.js
-│   │       ├── VoiceRecorder.js
-│   │       ├── WaveformVisualizer.js
-│   │       ├── BiomarkerCard.js
-│   │       ├── HealthScoreRing.js
-│   │       ├── TrendChart.js
-│   │       └── AlertBanner.js
-│   ├── lib/supabase/
-│   │   ├── client.js
-│   │   └── server.js
-│   └── .env.local
-└── supabase_schema.sql         # Database schema
+│   │   ├── page.js              # Main dashboard
+│   │   ├── record/page.js       # Voice recording + analysis
+│   │   ├── history/page.js      # Assessment timeline
+│   │   ├── insights/page.js     # Biomarker charts
+│   │   └── dashboard/page.js    # Redirects to /
+│   └── lib/supabase/            # Auth client helpers (for future use)
+├── backend/
+│   ├── main.py                  # FastAPI entry point
+│   ├── config.py                # Paths + CORS settings
+│   ├── routers/analysis.py      # /api/analyze, /api/history, etc.
+│   └── models/schemas.py        # API response models
+├── ML/
+│   ├── preprocessing/features.py  # librosa biomarkers
+│   ├── inference/                 # predict_voice() router
+│   ├── training/                  # train_*.py scripts
+│   ├── datasets/generate.py       # synthetic CSV generator
+│   ├── TRAINING.md                # how to train models yourself
+│   └── models/                    # trained weights (gitignored — generate locally)
+└── supabase_schema.sql
 ```
 
-## 🎯 Supported Conditions
+## API endpoints
 
-- Parkinson's Disease
-- Asthma & COPD
-- Depression
-- Post-Stroke Recovery
-- Cardiovascular Disease
-- Neurological Disorders
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/analyze` | POST | Analyze uploaded audio |
+| `/api/history` | GET | List saved assessments |
+| `/api/extract-medical-records` | POST | Import PDF/image reports |
+| `/api/health` | GET | Health check |
+| `/api/biomarker-info` | GET | Biomarker documentation |
 
-## 📄 License
+## Supported conditions
 
-MIT License — Built for hackathon demonstration purposes.
+| Condition | ML support |
+|-----------|------------|
+| Parkinson's | Yes |
+| Depression | Yes |
+| Asthma | Yes |
 
-## ⚡ Key Design Decisions
+Patients select **one condition** during onboarding. The app tunes prompts, biomarkers, and dashboard for that condition only.
 
-1. **100% Open Source ML** — No paid APIs (librosa + scikit-learn)
-2. **Non-invasive** — Only 15 seconds of daily voice input
-3. **Privacy-first** — All processing happens on your server
-4. **Demo Mode** — Dashboard works with simulated data out of the box
-5. **Scalable** — FastAPI + Supabase can handle production workloads
+## Tech stack
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | Next.js, React, Recharts, Tailwind |
+| Backend | FastAPI, Python |
+| ML | Librosa, XGBoost, TensorFlow (LSTM), scikit-learn |
+| Database | Supabase (PostgreSQL) |
+
+## Pushing to GitHub
+
+`.gitignore` is set up so you push **code + requirements + docs**, not secrets or generated blobs:
+
+| Pushed | Not pushed (local only) |
+|--------|-------------------------|
+| `backend/`, `frontend/`, `ML/*.py` | `backend/.env`, `frontend/.env.local` |
+| `requirements.txt`, `package.json` | `node_modules/`, `.next/`, `venv/` |
+| `ML/TRAINING.md`, `datasets/generate.py` | `ML/models/*.pkl`, `*.joblib`, `*.keras` |
+| `.env.example` files | `ML/datasets/**/*.csv`, root `datasets/` WAVs |
+| `supabase_schema.sql` | `note.txt`, `*.pdf`, recorded `*.wav` |
+
+After clone: install deps → train models → copy `.env.example` → run.
+
+## License
+
+MIT — Built for hackathon demonstration purposes.

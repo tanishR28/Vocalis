@@ -3,63 +3,74 @@ Analysis Router
 API endpoints for voice biomarker analysis.
 """
 
+import os
+import re
+import sys
 import uuid
+import shutil
+import tempfile
+import traceback
 from datetime import datetime, timedelta
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from typing import Optional, Any, Dict, Tuple
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 
-from supabase import create_client, Client
+from dotenv import load_dotenv
+from fastapi import APIRouter, File, Form, UploadFile
+from fastapi.responses import JSONResponse
+from supabase import Client, create_client
 
+from config import ML_DIR
 from models.schemas import AnalysisResponse
 
 router = APIRouter(prefix="/api", tags=["analysis"])
 
-import os
-import sys
-import shutil
-import traceback
-import subprocess
-import time
-import re
-from fastapi.responses import JSONResponse
-
-
-_repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-_ml_candidates = [
-    os.path.join(_repo_root, "ML", "rudra123"),  # legacy layout
-    os.path.join(_repo_root, "ML"),               # current layout
-]
-ml_model_dir = next(
-    (p for p in _ml_candidates if os.path.exists(os.path.join(p, "inference.py"))),
-    _ml_candidates[0],
-)
-
+ml_model_dir = str(ML_DIR)
 if ml_model_dir not in sys.path:
     sys.path.insert(0, ml_model_dir)
 
 try:
-    from inference import MultiDiseaseInferenceEngine  # type: ignore
+    from inference.router import predict_voice  # type: ignore
 except ImportError as import_error:
-    print(f"[ERROR] Failed to import ML engine from {ml_model_dir}: {import_error}")
-    MultiDiseaseInferenceEngine = None
+    print(f"[ERROR] Failed to import ML router from {ml_model_dir}: {import_error}")
+    predict_voice = None
 
+from services.trend_engine import compute_trends
+from models.schemas import TrendInfo
+
+
+supabase: Optional[Client] = None
+SUPABASE_NOT_CONFIGURED_ERROR = (
+    "Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in backend/.env"
+)
+SUPABASE_INIT_ERROR: Optional[str] = None
+
+# Ensure backend/.env is loaded even if this module is imported directly.
+_backend_env = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(dotenv_path=_backend_env)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-supabase: Optional[Client] = None
 
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     try:
         supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     except Exception as supabase_init_error:
+        SUPABASE_INIT_ERROR = str(supabase_init_error)
         print(f"[ERROR] Failed to initialize Supabase client: {supabase_init_error}")
+
+
+def _supabase_unavailable_error() -> str:
+    if SUPABASE_INIT_ERROR:
+        return (
+            "Supabase initialization failed. "
+            "Check SUPABASE_SERVICE_ROLE_KEY value/type in backend/.env. "
+            f"Details: {SUPABASE_INIT_ERROR}"
+        )
+    return SUPABASE_NOT_CONFIGURED_ERROR
 
 
 DOCUMENT_CONDITION_KEYWORDS = {
     "Asthma": ["asthma", "wheezing", "bronchodilator", "shortness of breath", "inhaler"],
-    "Cardiovascular": ["cardiovascular", "hypertension", "blood pressure", "cholesterol", "heart failure", "arrhythmia"],
-    "Neurological": ["neurological", "seizure", "epilepsy", "migraine", "cognitive", "neuropathy"],
-    "Post-Stroke": ["stroke", "cva", "post stroke", "post-stroke", "hemiparesis", "aphasia"],
     "Parkinson's": ["parkinson", "bradykinesia", "tremor", "rigidity", "dopamin", "micrographia"],
     "Depression": ["depression", "depressed", "low mood", "anhedonia", "antidepressant", "sadness"],
 }
@@ -188,7 +199,7 @@ def _persist_document_rows_to_supabase(
     user_id: Optional[str] = None,
 ) -> Tuple[bool, int, Optional[str]]:
     if supabase is None:
-        return False, 0, "Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in backend/.env"
+        return False, 0, _supabase_unavailable_error()
 
     rows = report.get("rows", []) or []
     if not rows:
@@ -276,6 +287,116 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+def _save_upload_to_tempfile(upload: UploadFile) -> str:
+    suffix = Path(upload.filename or "upload").suffix or ".bin"
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        shutil.copyfileobj(upload.file, temp_file)
+        temp_file.flush()
+        return temp_file.name
+    finally:
+        temp_file.close()
+
+
+def _fetch_history_for_trends(user_id: Optional[str], limit: int = 30) -> list[dict[str, Any]]:
+    if supabase is None:
+        return []
+    try:
+        recording_query = (
+            supabase.table("recordings")
+            .select("id,recorded_at")
+            .order("recorded_at", desc=True)
+            .limit(limit)
+        )
+        if user_id:
+            recording_query = recording_query.eq("user_id", user_id)
+        recordings = recording_query.execute().data or []
+        if not recordings:
+            return []
+
+        ids = [r["id"] for r in recordings if r.get("id")]
+        biomarker_response = (
+            supabase.table("biomarkers")
+            .select("recording_id,health_score,severity,tremor_score,speech_rate,jitter,shimmer,pitch_mean,raw_features,analyzed_at")
+            .in_("recording_id", ids)
+            .execute()
+        )
+        bio_map = {b["recording_id"]: b for b in (biomarker_response.data or [])}
+        rows = []
+        for rec in recordings:
+            bio = bio_map.get(rec["id"], {})
+            raw = bio.get("raw_features") or {}
+            rows.append({
+                "health_score": bio.get("health_score"),
+                "severity": raw.get("severity") or bio.get("severity"),
+                "tremor_score": bio.get("tremor_score"),
+                "speech_score": raw.get("speech_score"),
+                "speech_rate": bio.get("speech_rate"),
+                "jitter": bio.get("jitter"),
+                "shimmer": bio.get("shimmer"),
+                "pitch_mean": bio.get("pitch_mean"),
+                "biomarkers": raw.get("biomarkers"),
+                "signals": raw.get("signals"),
+                "analyzed_at": bio.get("analyzed_at") or rec.get("recorded_at"),
+            })
+        return rows
+    except Exception:
+        return []
+
+
+def _persist_alerts(user_id: Optional[str], recording_id: str, alerts: list[dict[str, Any]]) -> None:
+    if supabase is None or not alerts:
+        return
+    payload = []
+    for alert in alerts:
+        payload.append({
+            "user_id": user_id,
+            "recording_id": recording_id,
+            "alert_type": alert.get("alert_type", "threshold"),
+            "severity": alert.get("severity", "medium"),
+            "message": alert.get("message", "Voice biomarker alert"),
+            "biomarker": alert.get("biomarker"),
+        })
+    try:
+        supabase.table("alerts").insert(payload).execute()
+    except Exception:
+        pass
+
+
+def _biomarker_values(biomarkers: Dict[str, Any], signals: Dict[str, Any]) -> Dict[str, float]:
+    pause = biomarkers.get("pause_patterns")
+    if pause is None:
+        pause = biomarkers.get("pause_irregularity")
+    if pause is None:
+        pause = biomarkers.get("cognitive_pause")
+    if pause is None:
+        pause = biomarkers.get("pitch_monotony")
+    if pause is None:
+        pause = signals.get("pause_count", 0.0)
+
+    tremor = biomarkers.get("tremor")
+    if tremor is None:
+        tremor = signals.get("jitter", 0.0)
+
+    breath = biomarkers.get("breathlessness")
+    if breath is None:
+        breath = biomarkers.get("vocal_energy", 0.0)
+
+    return {
+        "tremor_score": float(tremor),
+        "breathlessness_score": float(breath),
+        "pitch_mean": float(signals.get("pitch_mean", 0.0)),
+        "pitch_variation": float(signals.get("pitch_std", 0.0)),
+        "speech_rate": float(biomarkers.get("speech_rate", signals.get("speech_rate", 0.0))),
+        "pause_score": float(pause),
+        "pause_count": int(signals.get("pause_count", 0) or 0),
+        "pause_duration_avg": float(signals.get("avg_pause_len", 0.0)),
+        "hnr": float(signals.get("hnr", 0.0)),
+        "jitter": float(signals.get("jitter", 0.0)),
+        "shimmer": float(signals.get("shimmer", 0.0)),
+    }
+
+
 def _persist_analysis_to_supabase(
     recording_id: str,
     user_id: Optional[str],
@@ -287,7 +408,7 @@ def _persist_analysis_to_supabase(
     health_score: int,
 ) -> Tuple[bool, Optional[str]]:
     if supabase is None:
-        return False, "Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in backend/.env"
+        return False, _supabase_unavailable_error()
 
     try:
         recording_payload = {
@@ -301,19 +422,20 @@ def _persist_analysis_to_supabase(
         supabase.table("recordings").insert(recording_payload).execute()
 
         biomarkers = report.get("biomarkers", {}) or {}
+        scores = _biomarker_values(biomarkers, signals)
         biomarker_payload = {
             "recording_id": recording_id,
             "user_id": user_id,
-            "tremor_score": float(signals.get("jitter", 0.0)),
-            "breathlessness_score": float(signals.get("shimmer", 0.0)),
-            "pitch_mean": float(signals.get("pitch_mean", 0.0)),
-            "pitch_variation": float(signals.get("pitch_std", 0.0)),
-            "speech_rate": float(signals.get("speech_rate", 0.0)),
-            "pause_count": int(signals.get("pause_count", 0) or 0),
-            "pause_duration_avg": float(signals.get("avg_pause_len", 0.0)),
-            "hnr": float(signals.get("hnr", 0.0)),
-            "jitter": float(signals.get("jitter", 0.0)),
-            "shimmer": float(signals.get("shimmer", 0.0)),
+            "tremor_score": scores["tremor_score"],
+            "breathlessness_score": scores["breathlessness_score"],
+            "pitch_mean": scores["pitch_mean"],
+            "pitch_variation": scores["pitch_variation"],
+            "speech_rate": scores["speech_rate"],
+            "pause_count": scores["pause_count"],
+            "pause_duration_avg": scores["pause_duration_avg"],
+            "hnr": scores["hnr"],
+            "jitter": scores["jitter"],
+            "shimmer": scores["shimmer"],
             "health_score": float(health_score),
             "health_category": report.get("risk_level", "Unknown"),
             "confidence": float(report.get("confidence", 0.0)),
@@ -323,7 +445,15 @@ def _persist_analysis_to_supabase(
                 "biomarkers": _json_safe(biomarkers),
                 "disease_score": float(report.get("disease_score", 0.0)),
                 "prediction": report.get("prediction", "Unknown"),
+                "severity": float(report.get("severity", 0.0)),
+                "stage": report.get("stage"),
+                "speech_score": float(report.get("speech_score", 0.0)),
+                "breathlessness_score": float(report.get("breathlessness_score", 0.0)),
+                "confidence": float(report.get("confidence", 0.0)),
+                "cough_detected": bool(report.get("cough_detected", False)),
+                "wheeze_detected": bool(report.get("wheeze_detected", False)),
             },
+            "health_trend": report.get("health_trend", "stable"),
             "analyzed_at": analyzed_at_iso,
         }
         supabase.table("biomarkers").insert(biomarker_payload).execute()
@@ -343,10 +473,7 @@ def _persist_analysis_to_supabase(
 async def get_history(limit: int = 20, user_id: Optional[str] = None, source: str = "all"):
     """Return recent analyzed recordings with linked biomarker rows."""
     if supabase is None:
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Supabase is not configured in backend. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in backend/.env"},
-        )
+        return {"items": []}
 
     try:
         recording_query = (
@@ -417,11 +544,8 @@ async def get_history(limit: int = 20, user_id: Optional[str] = None, source: st
 @router.post("/extract-medical-records")
 async def extract_medical_records(file: UploadFile = File(...)):
     """Extract text from uploaded medical pages/images and infer likely conditions."""
-    temp_file_name = f"temp_{uuid.uuid4()}_{file.filename}"
+    temp_file_name = _save_upload_to_tempfile(file)
     try:
-        with open(temp_file_name, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
         extracted_text, source_type = _extract_text_from_document(temp_file_name, file.filename, file.content_type)
         detections = _detect_conditions_from_text(extracted_text)
         report = _parse_document_report_rows(extracted_text)
@@ -432,7 +556,7 @@ async def extract_medical_records(file: UploadFile = File(...)):
             filename=file.filename,
         )
 
-        if not saved:
+        if not saved and save_error and save_error != SUPABASE_NOT_CONFIGURED_ERROR:
             return JSONResponse(
                 status_code=500,
                 content={"error": f"Text extracted but failed to save imported rows: {save_error}"},
@@ -465,28 +589,12 @@ async def analyze_voice(
     disease: str = Form("unknown"),
     user_id: Optional[str] = Form(None),
 ):
-    """Voice biomarker analysis using authentic PyTorch models.
-
-    Args:
-        file: Audio file upload
-        disease: The user's selected disease condition
-
-    Returns:
-        AnalysisResponse with extracted biomarkers
-    """
-    temp_file_name = f"temp_{uuid.uuid4()}_{file.filename}"
+    """Voice biomarker analysis using XGBoost (Parkinson/Depression) or rule-based Asthma."""
+    temp_file_name = _save_upload_to_tempfile(file)
     try:
-        print(f"[DEBUG] Audio received: {file.filename}")
-        with open(temp_file_name, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
-        time.sleep(0.4) # Delay to avoid incomplete file writes
-        
         file_size = os.path.getsize(temp_file_name)
-        print(f"[DEBUG] File size: {file_size} bytes")
 
         if file_size == 0 or file_size < 1000:
-            if os.path.exists(temp_file_name): os.remove(temp_file_name)
             return JSONResponse(
                 status_code=400,
                 content={"error": "Audio file is empty or too small. Please record at least a few seconds."}
@@ -496,77 +604,59 @@ async def analyze_voice(
 
         disease_mapping = {
             "parkinson's": "Parkinson’s",
+            "parkinson’s": "Parkinson’s",
             "asthma": "Asthma",
-            "post-stroke": "Post-Stroke",
-            "neurological": "Neurological",
-            "cardiovascular": "skip",
-            "depression": "skip"
+            "depression": "Depression",
         }
-        
-        target_disease = disease_mapping.get(disease.lower(), None)
 
-        if target_disease == "skip":
-            if os.path.exists(temp_file_name): os.remove(temp_file_name)
-            return AnalysisResponse(
-                recording_id=recording_id,
-                pitch_variation=0.0,
-                breath_score=0.0,
-                pause_score=0.0,
-                speech_rate=0.0,
-                tremor_score=0.0,
-                signature_detected=0.0,
-                health_score=85,
-                status="Feature Not Available",
-                analyzed_at=datetime.utcnow().isoformat(),
-            )
-            
+        target_disease = disease_mapping.get(disease.lower().strip())
+        if not target_disease and disease == "Parkinson's":
+            target_disease = "Parkinson’s"
+
         if not target_disease:
-            if os.path.exists(temp_file_name): os.remove(temp_file_name)
-            return JSONResponse(status_code=400, content={"error": f"Unsupported disease selected: {disease}"})
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Unsupported condition: {disease}. Supported: Parkinson's, Depression, Asthma."},
+            )
 
-        if supabase is None:
-            if os.path.exists(temp_file_name): os.remove(temp_file_name)
+        if predict_voice is None:
             return JSONResponse(
                 status_code=500,
-                content={"error": "Supabase is not configured in backend. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in backend/.env"},
+                content={"error": f"ML router failed to load. Checked path: {ml_model_dir}"},
             )
-            
-        if MultiDiseaseInferenceEngine is None:
-            if os.path.exists(temp_file_name): os.remove(temp_file_name)
-            return JSONResponse(
-                status_code=500,
-                content={"error": f"ML engine failed to load. Checked path: {ml_model_dir}"},
-            )
-            
-        original_cwd = os.getcwd()
-        os.chdir(ml_model_dir)
-        
-        try:
-            print("[DEBUG] Model loaded")
-            engine = MultiDiseaseInferenceEngine(target_disease)
-            
-            print("[DEBUG] Extracting features...")
-            print("[DEBUG] Sending to model")
-            report = engine.predict(os.path.join(original_cwd, temp_file_name))
-            
-            print("[DEBUG] Prediction made")
-        finally:
-            os.chdir(original_cwd)
+
+        history_rows = _fetch_history_for_trends(user_id)
+        report = predict_voice(target_disease, temp_file_name)
 
         bios = report.get('biomarkers', {})
         sigs = report.get('signals', {})
-        d_score = report.get('disease_score', 0.0)
-        health_score = int((1.0 - d_score) * 100)
+        scores = _biomarker_values(bios, sigs)
+        health_score = int(report.get('health_score', 0))
+        if health_score == 0:
+            d_score = report.get('disease_score', 0.0)
+            health_score = int((1.0 - d_score) * 100)
         health_score = max(0, min(100, health_score))
 
-        # Product rule: when Asthma analysis detects cough, force a conservative default score.
-        cough_detected = bool(bios.get('cough_detected')) or ('COUGH' in str(report.get('prediction', '')).upper())
-        if target_disease == 'Asthma' and cough_detected:
-            health_score = 43
-        
-        sig_detected = report.get('signature_detected', False)
-        # If true, it means disease specific signature was found. Let's make it a value of 1.0 or 0.0 for graphing.
-        sig_val = 1.0 if sig_detected else 0.0
+        severity = float(report.get('severity', (1 - health_score / 100) * 100))
+        today_payload = {
+            "health_score": health_score,
+            "severity": severity,
+            "speech_score": float(report.get('speech_score', 0)),
+            "tremor_score": float(report.get('tremor_score', scores["tremor_score"])),
+            "breathlessness_score": float(report.get('breathlessness_score', scores["breathlessness_score"])),
+        }
+        trend_data = compute_trends(today_payload, history_rows, target_disease)
+        report["health_trend"] = trend_data.get("trend", "stable")
+
+        sig_val = 1.0 if report.get('signature_detected') else 0.0
+        cough_detected = bool(report.get('cough_detected'))
+        wheeze_detected = bool(report.get('wheeze_detected'))
+        status = str(report.get('prediction', 'Unknown'))
+        if target_disease == 'Asthma':
+            if cough_detected:
+                status = 'COUGH DETECTED'
+            elif wheeze_detected:
+                status = 'WHEEZE DETECTED'
         analyzed_at = datetime.utcnow().isoformat()
 
         db_saved, db_error = _persist_analysis_to_supabase(
@@ -579,26 +669,51 @@ async def analyze_voice(
             signals=sigs,
             health_score=health_score,
         )
+        persistence_warning = None
         if not db_saved:
-            return JSONResponse(status_code=500, content={"error": f"Analysis completed but failed to save in database: {db_error}"})
-        
+            persistence_warning = db_error or _supabase_unavailable_error()
+
+        if db_saved and trend_data.get("alerts"):
+            _persist_alerts(user_id, recording_id, trend_data["alerts"])
+
+        trend_info = TrendInfo(
+            baseline=trend_data.get("baseline"),
+            vs_yesterday=trend_data.get("vs_yesterday"),
+            vs_baseline=trend_data.get("vs_baseline"),
+            weekly_change_pct=trend_data.get("weekly_change_pct"),
+            trend=trend_data.get("trend", "stable"),
+            risk=trend_data.get("risk", "moderate"),
+            alert=bool(trend_data.get("alert")),
+            baseline_ready=bool(trend_data.get("baseline_ready")),
+            weekly_ready=bool(trend_data.get("weekly_ready")),
+            forecast=trend_data.get("forecast"),
+        )
+
         return AnalysisResponse(
             recording_id=recording_id,
-            pitch_variation=float(sigs.get('pitch_std', 0.0)),
-            breath_score=float(sigs.get('shimmer', 0.0)),
-            pause_score=float(sigs.get('pause_count', 0.0)),
-            speech_rate=float(sigs.get('speech_rate', 0.0)),
-            tremor_score=float(sigs.get('jitter', 0.0)),
+            pitch_variation=scores["pitch_variation"],
+            breath_score=scores["breathlessness_score"],
+            pause_score=scores["pause_score"],
+            speech_rate=scores["speech_rate"],
+            tremor_score=float(report.get('tremor_score', scores["tremor_score"])),
             signature_detected=sig_val,
+            cough_detected=cough_detected,
+            wheeze_detected=wheeze_detected,
             health_score=health_score,
-            status=report.get('prediction', 'Unknown'),
+            status=status,
+            severity=severity,
+            stage=str(report.get('stage', 'Mild')),
+            confidence=float(report.get('confidence', 0.0)),
+            speech_score=float(report.get('speech_score', 0.0)),
+            breathlessness_score=float(report.get('breathlessness_score', scores["breathlessness_score"])),
+            trends=trend_info,
             analyzed_at=analyzed_at,
+            db_persisted=db_saved,
+            persistence_warning=persistence_warning,
         )
 
     except Exception as e:
-        err_msg = str(e)
-        if not err_msg:
-            err_msg = repr(e)
+        err_msg = str(e) or repr(e)
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": err_msg})
     finally:
@@ -634,7 +749,7 @@ async def biomarker_info():
                 "name": "Breathlessness",
                 "key": "breathlessness_score",
                 "unit": "score (0-100)",
-                "description": "Assesses breathiness in voice through spectral analysis and harmonics-to-noise ratio. Elevated in asthma, cardiovascular, and respiratory conditions.",
+                "description": "Assesses breathiness in voice through spectral analysis and harmonics-to-noise ratio. Elevated in asthma and respiratory conditions.",
                 "healthy_range": "0-20",
                 "warning_range": "20-40",
                 "critical_range": "40+",

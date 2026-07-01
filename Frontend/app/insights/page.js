@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ResponsiveContainer,
   LineChart,
@@ -22,20 +22,7 @@ import {
   Scatter,
 } from 'recharts';
 
-const HARD_CODED_DATA = [
-  { sample: 'S1', pitch_mean: 217.52, pitch_std: 13.106, jitter: 0.00175, shimmer: 0.0512, hnr: 7.723, speech_rate: 3.288, pause_count: 2, avg_pause: 0.2374, status: 'mild_concern' },
-  { sample: 'S2', pitch_mean: 190.73, pitch_std: 14.171, jitter: 0.00226, shimmer: 0.06787, hnr: 10.191, speech_rate: 4.123, pause_count: 4, avg_pause: 0.3629, status: 'mild_concern' },
-  { sample: 'S3', pitch_mean: 159.23, pitch_std: 29.045, jitter: 0.0001, shimmer: 0.04926, hnr: 8.393, speech_rate: 4.302, pause_count: 3, avg_pause: 0.2718, status: 'mild_concern' },
-  { sample: 'S4', pitch_mean: 168.14, pitch_std: 18.704, jitter: 0.00293, shimmer: 0.05969, hnr: 9.77, speech_rate: 3.645, pause_count: 3, avg_pause: 0.3425, status: 'mild_concern' },
-  { sample: 'S5', pitch_mean: 188.42, pitch_std: 17.206, jitter: 0.00284, shimmer: 0.03584, hnr: 13.399, speech_rate: 4.501, pause_count: 3, avg_pause: 0.2219, status: 'mild_concern' },
-  { sample: 'S6', pitch_mean: 188.49, pitch_std: 18.358, jitter: 0.00136, shimmer: 0.02891, hnr: 11.497, speech_rate: 3.327, pause_count: 3, avg_pause: 0.1758, status: 'mild_concern' },
-  { sample: 'S7', pitch_mean: 214.58, pitch_std: 17.051, jitter: 0.00178, shimmer: 0.0501, hnr: 18.216, speech_rate: 4.452, pause_count: 2, avg_pause: 0.3237, status: 'mild_concern' },
-  { sample: 'S8', pitch_mean: 190.8, pitch_std: 9.217, jitter: 0.00204, shimmer: 0.05615, hnr: 12.701, speech_rate: 3.374, pause_count: 3, avg_pause: 0.2992, status: 'mild_concern' },
-  { sample: 'S9', pitch_mean: 194.46, pitch_std: 16.269, jitter: 0.00177, shimmer: 0.04274, hnr: 11.032, speech_rate: 3.96, pause_count: 3, avg_pause: 0.3219, status: 'mild_concern' },
-  { sample: 'S10', pitch_mean: 190.71, pitch_std: 17.434, jitter: 0.00192, shimmer: 0.05481, hnr: 5.937, speech_rate: 3.373, pause_count: 2, avg_pause: 0.3257, status: 'mild_concern' },
-  { sample: 'S11', pitch_mean: 172.91, pitch_std: 20.74, jitter: 0.00166, shimmer: 0.07039, hnr: 10.363, speech_rate: 3.938, pause_count: 2, avg_pause: 0.2854, status: 'mild_concern' },
-  { sample: 'S12', pitch_mean: 159.09, pitch_std: 17.495, jitter: 0.0026, shimmer: 0.04175, hnr: 12.182, speech_rate: 3.299, pause_count: 2, avg_pause: 0.2448, status: 'mild_concern' },
-];
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -46,37 +33,66 @@ function avg(values) {
   return values.reduce((s, v) => s + v, 0) / values.length;
 }
 
+function mapHistoryToChart(items) {
+  return [...items].reverse().map((item, index) => {
+    const biomarkers = item.biomarkers || {};
+    const signals = biomarkers.raw_features?.signals || {};
+
+    return {
+      sample: `S${index + 1}`,
+      pitch_mean: Number(biomarkers.pitch_mean ?? signals.pitch_mean ?? 0),
+      pitch_std: Number(biomarkers.pitch_variation ?? signals.pitch_std ?? 0),
+      jitter: Number(biomarkers.jitter ?? signals.jitter ?? 0),
+      shimmer: Number(biomarkers.shimmer ?? signals.shimmer ?? 0),
+      hnr: Number(biomarkers.hnr ?? signals.hnr ?? 0),
+      speech_rate: Number(biomarkers.speech_rate ?? signals.speech_rate ?? 0),
+      pause_count: Number(biomarkers.pause_count ?? signals.pause_count ?? 0),
+      avg_pause: Number(biomarkers.pause_duration_avg ?? signals.avg_pause_len ?? 0),
+      health_score: Number(item.health_score?.score ?? biomarkers.health_score ?? 0),
+      status: item.health_score?.category || 'unknown',
+    };
+  });
+}
+
 export default function InsightsPage() {
+  const [historyItems, setHistoryItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadHistory() {
+      try {
+        const response = await fetch(`${API_URL}/api/history?limit=50&source=audio`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (active) {
+          setHistoryItems(Array.isArray(data.items) ? data.items : []);
+        }
+      } catch {
+        if (active) setHistoryItems([]);
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    loadHistory();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const chartData = useMemo(() => {
-    return HARD_CODED_DATA.map((row, index, arr) => {
-      const risk =
-        row.jitter * 15000 +
-        row.shimmer * 300 +
-        row.pitch_std * 1.2 +
-        Math.abs(row.speech_rate - 3.8) * 8 +
-        row.pause_count * 3 -
-        row.hnr * 0.8;
-
-      const healthScore = clamp(100 - risk, 35, 95);
+    const rows = mapHistoryToChart(historyItems);
+    return rows.map((row, index, arr) => {
       const start = Math.max(0, index - 2);
-      const movingWindow = arr.slice(start, index + 1).map((item) => {
-        const localRisk =
-          item.jitter * 15000 +
-          item.shimmer * 300 +
-          item.pitch_std * 1.2 +
-          Math.abs(item.speech_rate - 3.8) * 8 +
-          item.pause_count * 3 -
-          item.hnr * 0.8;
-        return clamp(100 - localRisk, 35, 95);
-      });
-
+      const movingWindow = arr.slice(start, index + 1).map((item) => item.health_score);
       return {
         ...row,
-        health_score: Number(healthScore.toFixed(2)),
         health_score_avg3: Number(avg(movingWindow).toFixed(2)),
       };
     });
-  }, []);
+  }, [historyItems]);
 
   const biomarkerAverages = useMemo(() => {
     return [
@@ -119,46 +135,23 @@ export default function InsightsPage() {
   }, [chartData]);
 
   return (
-    <>
-      <aside className="h-screen w-64 fixed left-0 top-0 border-r border-slate-100 bg-slate-50 flex flex-col p-4 gap-2 z-50 hidden md:flex">
-        <div className="px-2 py-6 mb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-              <span className="material-symbols-outlined text-white" style={{ fontVariationSettings: "'FILL' 1" }}>graphic_eq</span>
-            </div>
-            <div>
-              <h1 className="text-blue-700 font-extrabold font-headline leading-tight">Vocalis AI</h1>
-              <p className="text-[10px] font-bold tracking-widest text-slate-500 uppercase">Clinical Grade</p>
-            </div>
-          </div>
-        </div>
-
-        <nav className="flex-1 space-y-1">
-          <Link href="/" className="flex items-center gap-3 px-4 py-3 text-slate-500 hover:bg-slate-100 rounded-xl font-medium">
-            <span className="material-symbols-outlined">dashboard</span>
-            <span>Dashboard</span>
-          </Link>
-          <Link href="/record" className="flex items-center gap-3 px-4 py-3 text-slate-500 hover:bg-slate-100 rounded-xl font-medium">
-            <span className="material-symbols-outlined">mic</span>
-            <span>Record</span>
-          </Link>
-          <Link href="/history" className="flex items-center gap-3 px-4 py-3 text-slate-500 hover:bg-slate-100 rounded-xl font-medium">
-            <span className="material-symbols-outlined">history</span>
-            <span>History</span>
-          </Link>
-          <Link href="/insights" className="flex items-center gap-3 px-4 py-3 bg-white text-blue-700 rounded-xl shadow-sm font-semibold">
-            <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>analytics</span>
-            <span>Insights</span>
-          </Link>
-        </nav>
-      </aside>
-
-      <main className="flex-1 w-full md:ml-64 min-h-screen p-6 md:p-8 space-y-6">
+    <div className="p-6 md:p-8 max-w-7xl mx-auto w-full space-y-6">
         <header>
-          <h2 className="text-3xl font-bold text-slate-900">Clinical Insights Feed</h2>
-          <p className="text-slate-600 mt-1">Clinical feature-set analysis using MFCC and biomarker patterns.</p>
+          <p className="text-slate-600">Biomarker trends from your saved voice assessments.</p>
         </header>
 
+        {!loading && chartData.length === 0 ? (
+          <section className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-600">
+            <p className="font-medium">No voice assessments yet.</p>
+            <p className="text-sm mt-2">Record a sample first, then return here for trend charts.</p>
+            <Link href="/record" className="inline-block mt-4 text-blue-700 font-bold hover:underline">
+              Go to Record
+            </Link>
+          </section>
+        ) : null}
+
+        {chartData.length > 0 ? (
+        <>
         <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-white rounded-2xl border border-slate-200 p-4">
             <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Samples</p>
@@ -294,7 +287,8 @@ export default function InsightsPage() {
             </div>
           </div>
         </section>
-      </main>
-    </>
+        </>
+        ) : null}
+    </div>
   );
 }

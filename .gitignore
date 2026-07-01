@@ -1,10 +1,12 @@
 # --------------------------------------------------
-# Global / OS / editor
+# OS / editor
 # --------------------------------------------------
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
+*.swp
+*.swo
 
 # --------------------------------------------------
 # Python
@@ -17,48 +19,88 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+*.egg-info/
+dist/
+build/
 
-# Virtual environments
+# Virtual environments (any location)
 .venv/
 venv/
+env/
 backend/.venv/
 backend/venv/
+ML/.venv/
+ML/venv/
 
 # --------------------------------------------------
-# Node / Next.js
+# Node / Next.js (frontend lives at frontend/ or Frontend/)
 # --------------------------------------------------
 node_modules/
-frontend/node_modules/
+**/node_modules/
 .next/
-frontend/.next/
-frontend/out/
-frontend/.vercel/
-frontend/coverage/
-
-# Logs
+**/.next/
+out/
+**/out/
+.vercel/
+**/.vercel/
+coverage/
+**/coverage/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+*.tsbuildinfo
 
 # --------------------------------------------------
-# Environment / secrets
+# Secrets — never commit
 # --------------------------------------------------
 .env
-.env.*
+.env.local
+.env.*.local
+backend/.env
+frontend/.env.local
+Frontend/.env.local
+
+# Allow examples only
 !.env.example
+!**/.env.example
 !frontend/.env.example
+!Frontend/.env.example
 
 # --------------------------------------------------
-# Temporary runtime artifacts
+# Runtime / temp audio
 # --------------------------------------------------
 backend/temp_*
-backend/test_tone.wav
+**/temp_*
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.webm
 
 # --------------------------------------------------
-# ML data and local experiment outputs
-# Keep trained model artifacts under ML/rudra123/models tracked
+# Local notes & one-off reports (not part of the app)
 # --------------------------------------------------
-ML/rudra123/data/
-ML/rudra123/*dataset*
-ML/rudra123/*.csv
+note.txt
+*.pdf
+
+# --------------------------------------------------
+# Root-level raw audio datasets (your own training WAVs)
+# NOT the ML synthetic CSV pipeline under ML/datasets/
+# --------------------------------------------------
+/datasets/
+
+# --------------------------------------------------
+# ML — generated training data & trained weights
+# Code under ML/ IS tracked. After clone: run datasets/generate.py
+# and training/train_*.py to produce models locally.
+# --------------------------------------------------
+ML/data/
+ML/datasets/**/*.csv
+ML/models/*.pkl
+ML/models/*.joblib
+ML/models/*.keras
+ML/models/*.h5
+ML/models/*.pth
+ML/__pycache__/
+ML/**/__pycache__/

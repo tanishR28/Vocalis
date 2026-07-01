@@ -1,22 +1,21 @@
-# Data and Large Files
-data/
-*.csv
-*dataset*
+# Complements repo-root .gitignore for ML-only context.
+# Trained artifacts and generated CSVs — reproduce via generate.py + train_*.py
 
-# Audio and Temp
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.ipynb_checkpoints/
+
+datasets/**/*.csv
+models/*.pkl
+models/*.joblib
+models/*.keras
+models/*.h5
+models/*.pth
+
 *.wav
 *.mp3
 *.ogg
 temp_*
-
-# Python
-__pycache__/
-*.pyc
-.ipynb_checkpoints/
-
-# Environments
-venv/
-.env
-
-# Streamlit
-.streamlit/

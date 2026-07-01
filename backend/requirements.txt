@@ -1,18 +1,22 @@
+# FastAPI API + ML inference (loads ML/ on sys.path)
 fastapi==0.115.0
 uvicorn==0.30.6
+python-multipart==0.0.9
+pydantic==2.11.7
+python-dotenv==1.0.1
+supabase==2.28.3
+
+# ML runtime (must match ML/requirements.txt)
 librosa==0.10.2
 numpy==1.26.4
 scipy==1.13.1
 scikit-learn==1.5.1
-noisereduce==3.0.2
-python-multipart==0.0.9
-soundfile==0.12.1
-pydantic==2.11.7
-python-dotenv==1.0.1
-supabase==2.28.3
-openai==1.52.0
 joblib==1.5.3
-torch==2.5.1
+xgboost==2.1.4
+tensorflow==2.18.0
+soundfile==0.12.1
+
+# Medical record import (optional OCR)
 easyocr==1.7.2
 pypdf==5.1.0
 pillow==11.1.0

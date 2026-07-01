@@ -79,53 +79,14 @@ function HistoryPageContent() {
   }
 
   return (
-    <>
-      <aside className="h-screen w-64 fixed left-0 top-0 border-r border-slate-100 dark:border-slate-800 bg-slate-50 flex flex-col p-4 gap-2 z-40 hidden md:flex">
-        <div className="mb-8 px-2 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white shadow-lg">
-            <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>graphic_eq</span>
-          </div>
+    <div className="p-6 md:p-8 max-w-6xl mx-auto w-full">
+        <header className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-8">
           <div>
-            <h1 className="text-blue-700 font-headline font-extrabold text-lg leading-tight">Vocalis AI</h1>
-            <p className="text-xs font-label text-slate-500 uppercase tracking-widest">Clinical Grade</p>
+            <p className="text-on-surface-variant font-label">Real saved audio analyses from Supabase</p>
           </div>
-        </div>
-        <nav className="flex-1 space-y-1">
-          <Link href="/" className="flex items-center gap-3 px-4 py-3 text-slate-500 hover:bg-slate-100 hover:translate-x-1 transition-all rounded-xl font-medium">
-            <span className="material-symbols-outlined">dashboard</span>
-            <span>Dashboard</span>
-          </Link>
-          <Link href="/record" className="flex items-center gap-3 px-4 py-3 text-slate-500 hover:bg-slate-100 hover:translate-x-1 transition-all rounded-xl font-medium">
-            <span className="material-symbols-outlined">mic</span>
-            <span>Record</span>
-          </Link>
-          <Link href="/history" className="flex items-center gap-3 px-4 py-3 bg-white text-blue-700 rounded-xl shadow-sm border border-slate-100 font-semibold">
-            <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>history</span>
-            <span>History</span>
-          </Link>
-          <Link href="/insights" className="flex items-center gap-3 px-4 py-3 text-slate-500 hover:bg-slate-100 hover:translate-x-1 transition-all rounded-xl font-medium">
-            <span className="material-symbols-outlined">analytics</span>
-            <span>Insights</span>
-          </Link>
-          <button className="w-full flex flex-row items-center gap-3 px-4 py-3 text-slate-500 hover:bg-slate-100 hover:translate-x-1 transition-all rounded-xl font-medium">
-            <span className="material-symbols-outlined">settings</span>
-            <span>Settings</span>
-          </button>
-        </nav>
-        <div className="mt-auto pt-4 border-t border-slate-200"></div>
-      </aside>
-
-      <main className="flex-1 w-full md:ml-64 min-h-screen p-8 mb-16 md:mb-0">
-        <header className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-10">
-          <div>
-            <h2 className="text-3xl font-headline font-bold tracking-tight text-on-surface">Assessment History</h2>
-            <p className="text-on-surface-variant font-label mt-1">Real saved audio analyses from Supabase</p>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="hidden sm:flex items-center gap-2 px-4 py-2 bg-white rounded-xl shadow-sm border border-slate-100">
-              <span className="material-symbols-outlined text-slate-400">history</span>
-              <span className="text-sm font-semibold">{items.length} saved records</span>
-            </div>
+          <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-xl shadow-sm border border-slate-100">
+            <span className="material-symbols-outlined text-slate-400">history</span>
+            <span className="text-sm font-semibold">{items.length} saved records</span>
           </div>
         </header>
 
@@ -243,14 +204,13 @@ function HistoryPageContent() {
             </div>
           </div>
         ) : null}
-      </main>
-    </>
+    </div>
   );
 }
 
 export default function HistoryPage() {
   return (
-    <Suspense fallback={<main className="flex-1 w-full md:ml-64 min-h-screen p-8 mb-16 md:mb-0" />}>
+    <Suspense fallback={<div className="p-8 text-slate-500">Loading history…</div>}>
       <HistoryPageContent />
     </Suspense>
   );

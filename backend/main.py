@@ -6,7 +6,12 @@ Main application entry point with CORS middleware and routing.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-load_dotenv()  # Load variables from .env into os.environ
+from pathlib import Path
+
+from config import get_cors_origins
+
+# Load backend/.env regardless of where uvicorn is launched from.
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 from routers.analysis import router as analysis_router
 
@@ -20,10 +25,9 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS - allow Next.js frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
