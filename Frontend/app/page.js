@@ -3,6 +3,12 @@ import Link from 'next/link';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { getCondition } from '../lib/conditions';
 import { getProfile } from '../lib/profile';
+import {
+  getStoredReportImport,
+  saveReportImport,
+  clearReportImport,
+  toReportImportResult,
+} from '../lib/reportImport';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -86,20 +92,42 @@ function buildCalendarCells(monthDate) {
   return cells;
 }
 
+function formatBioValue(value, decimals = 4) {
+  if (value == null || !Number.isFinite(Number(value))) return '—';
+  const n = Number(value);
+  if (n !== 0 && Math.abs(n) < 0.0001) return n.toExponential(2);
+  if (Math.abs(n) >= 100) return n.toFixed(1);
+  return n.toFixed(decimals);
+}
+
 function normalizeStructuredReport(report) {
   const rows = Array.isArray(report?.rows)
     ? report.rows
-        .map((row) => ({
-          day: Number(row.day),
-          breathScore: Number(row.breath_score),
-          pauseScore: Number(row.pause_score),
-          speechRate: Number(row.speech_rate),
-          healthScore: Number(row.health_score),
-        }))
+        .map((row) => {
+          const lstm = row.lstm_row || {};
+          const hasLstm = lstm.motor_UPDRS != null;
+          return {
+            day: Number(row.day),
+            breathScore: Number(row.breath_score),
+            pauseScore: Number(row.pause_score),
+            speechRate: Number(row.speech_rate),
+            healthScore: Number(row.health_score),
+            hasLstm,
+            motorUpdrs: hasLstm ? Number(lstm.motor_UPDRS) : null,
+            jitter: hasLstm ? Number(lstm['Jitter(%)']) : null,
+            shimmer: hasLstm ? Number(lstm.Shimmer) : null,
+            hnr: hasLstm ? Number(lstm.HNR) : null,
+            rpde: hasLstm ? Number(lstm.RPDE) : null,
+            ppe: hasLstm ? Number(lstm.PPE) : null,
+          };
+        })
         .filter((row) => Number.isFinite(row.day))
         .sort((a, b) => a.day - b.day)
     : [];
 
+  const hasParkinsonBiomarkers = rows.some((row) => row.hasLstm);
+  const firstMotor = rows.find((r) => r.hasLstm)?.motorUpdrs ?? null;
+  const lastMotor = [...rows].reverse().find((r) => r.hasLstm)?.motorUpdrs ?? null;
   const firstScore = rows.length ? rows[0].healthScore : null;
   const lastScore = rows.length ? rows[rows.length - 1].healthScore : null;
 
@@ -107,6 +135,10 @@ function normalizeStructuredReport(report) {
     patientName: report?.patient_name || null,
     disease: report?.disease || null,
     rows,
+    hasParkinsonBiomarkers,
+    firstMotor,
+    lastMotor,
+    motorDelta: firstMotor != null && lastMotor != null ? lastMotor - firstMotor : null,
     firstScore,
     lastScore,
     scoreDelta: firstScore !== null && lastScore !== null ? lastScore - firstScore : null,
@@ -129,6 +161,11 @@ export default function DashboardPage() {
   const [reportImportResult, setReportImportResult] = useState(null);
   const [reportError, setReportError] = useState('');
   const [profile, setProfile] = useState(null);
+  const [forecastStatus, setForecastStatus] = useState(null);
+  const [forecastResult, setForecastResult] = useState(null);
+  const [isForecastLoading, setIsForecastLoading] = useState(false);
+  const [forecastError, setForecastError] = useState('');
+  const [showReportUploadForm, setShowReportUploadForm] = useState(false);
   const reportFileInputRef = useRef(null);
 
   const condition = profile ? getCondition(profile.conditionId) : null;
@@ -142,11 +179,18 @@ export default function DashboardPage() {
         setAnalysisData(JSON.parse(stored));
       } catch (e) { console.error(e); }
     }
+
+    const storedReport = getStoredReportImport();
+    if (storedReport) {
+      setReportImportResult(toReportImportResult(storedReport));
+      setUploadedReportFileName(storedReport.filename || 'Imported report');
+      setShowReportUploadForm(false);
+    }
   }, []);
 
   async function handleReportUpload() {
     if (!selectedReportFile) {
-      setReportError('Please choose a PDF or image file first.');
+      setReportError('Please choose a PDF, CSV, or image file first.');
       reportFileInputRef.current?.click();
       return;
     }
@@ -158,6 +202,8 @@ export default function DashboardPage() {
     try {
       const formData = new FormData();
       formData.append('file', selectedReportFile);
+      if (profile?.age != null) formData.append('age', String(profile.age));
+      if (profile?.sex === 0 || profile?.sex === 1) formData.append('sex', String(profile.sex));
 
       const response = await fetch(`${API_URL}/api/extract-medical-records`, {
         method: 'POST',
@@ -170,8 +216,17 @@ export default function DashboardPage() {
       }
 
       const data = await response.json();
-      setReportImportResult(data);
+      const saved = saveReportImport(data);
+      setReportImportResult(toReportImportResult(saved) || data);
       setUploadedReportFileName(data?.filename || selectedReportFile?.name || 'Uploaded file');
+      setShowReportUploadForm(false);
+      setSelectedReportFile(null);
+      setSelectedReportFileName('');
+
+      const statusResponse = await fetch(`${API_URL}/forecast/parkinsons/status`);
+      if (statusResponse.ok) {
+        setForecastStatus(await statusResponse.json());
+      }
 
       const historyResponse = await fetch(`${API_URL}/api/history?limit=60`);
       if (historyResponse.ok) {
@@ -209,6 +264,55 @@ export default function DashboardPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!mounted || profile?.conditionId !== 'parkinsons') return;
+
+    let active = true;
+
+    async function loadForecastStatus() {
+      try {
+        const response = await fetch(`${API_URL}/forecast/parkinsons/status`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (active) setForecastStatus(data);
+      } catch {
+        if (active) setForecastStatus(null);
+      }
+    }
+
+    loadForecastStatus();
+    return () => {
+      active = false;
+    };
+  }, [mounted, profile?.conditionId, historyItems.length]);
+
+  async function handleForecastProgression() {
+    setIsForecastLoading(true);
+    setForecastError('');
+    try {
+      const response = await fetch(`${API_URL}/forecast/parkinsons`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || data?.detail || 'Forecast request failed');
+      }
+      if (!data.ready) {
+        setForecastStatus(data);
+        setForecastError(data.message || 'Not enough sessions for forecasting yet.');
+        return;
+      }
+      setForecastResult(data);
+      setForecastStatus(data);
+    } catch (error) {
+      setForecastError(error?.message || 'Failed to run progression forecast.');
+    } finally {
+      setIsForecastLoading(false);
+    }
+  }
+
   const latestHistory = historyItems[0] || null;
   const trendLimit = trendRange === 'week' ? 7 : 30;
   const trendItems = historyItems.slice(0, trendLimit).reverse();
@@ -221,7 +325,12 @@ export default function DashboardPage() {
   const trendLabel = trendInfo?.trend || (trendScores.length >= 2 && trendScores[trendScores.length - 1] >= trendScores[0] ? 'improving' : 'stable');
   const vsBaseline = trendInfo?.vs_baseline;
   const weeklyPct = trendInfo?.weekly_change_pct;
-  const parkinsonForecast = profile?.conditionId === 'parkinsons' ? trendInfo?.forecast : null;
+  const lstmSessionsAvailable = forecastStatus?.sessions_available ?? historyItems.filter(
+    (item) => item.biomarkers?.raw_features?.lstm_row?.motor_UPDRS != null,
+  ).length;
+  const lstmSessionsRequired = forecastStatus?.sessions_required ?? 10;
+  const lstmForecastReady = forecastStatus?.ready ?? lstmSessionsAvailable >= lstmSessionsRequired;
+  const currentMotorUpdrs = forecastResult?.current_motor_updrs ?? forecastStatus?.current_motor_updrs ?? analysisData?.motor_updrs ?? null;
 
   const latestBiomarkerRows = historyItems.slice(0, 20).map((item) => item.biomarkers || {});
   const breathValues = latestBiomarkerRows
@@ -308,6 +417,38 @@ export default function DashboardPage() {
     if (!reportImportResult?.report) return null;
     return normalizeStructuredReport(reportImportResult.report);
   }, [reportImportResult]);
+
+  const hasUploadedReport = Boolean(uploadedReportFileName && reportImportResult);
+
+  function handleChangeReport() {
+    setShowReportUploadForm(true);
+    setSelectedReportFile(null);
+    setSelectedReportFileName('');
+    setReportError('');
+  }
+
+  function handleRemoveReport() {
+    clearReportImport();
+    setReportImportResult(null);
+    setUploadedReportFileName('');
+    setShowReportUploadForm(true);
+    setSelectedReportFile(null);
+    setSelectedReportFileName('');
+    setReportError('');
+  }
+
+  function formatImportedAt(iso) {
+    if (!iso) return null;
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return null;
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date);
+  }
 
   return (
     <>
@@ -437,58 +578,104 @@ export default function DashboardPage() {
           )}
 
           <section className="bg-white border border-slate-200 rounded-[18px] p-6 shadow-sm">
-            <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-5">
+            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-5">
               <div>
                 <h3 className="text-xl font-extrabold text-slate-900 font-headline">Import Previous Medical Records</h3>
-                <p className="text-sm text-slate-500 mt-1">Upload JPG, PNG, or PDF. Extracted rows are saved and included in trends and history.</p>
+                <p className="text-sm text-slate-500 mt-1">Upload JPG, PNG, PDF, or Parkinson history CSV. Extracted rows are saved and included in trends and LSTM history.</p>
               </div>
-              <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+              {hasUploadedReport && !showReportUploadForm ? (
+                <div className="flex flex-wrap gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleChangeReport}
+                    className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 transition-colors"
+                  >
+                    Change report
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRemoveReport}
+                    className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-100 transition-colors"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            {hasUploadedReport && !showReportUploadForm ? (
+              <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50/80 p-4 flex flex-col sm:flex-row sm:items-center gap-4">
+                <div className="flex items-start gap-3 flex-1 min-w-0">
+                  <span className="material-symbols-outlined text-emerald-600 text-3xl shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>description</span>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Report on file</p>
+                    <p className="text-base font-extrabold text-slate-900 truncate mt-0.5">{uploadedReportFileName}</p>
+                    <p className="text-sm text-emerald-800/90 mt-1">
+                      {reportImportResult.imported_rows ?? 0} days imported
+                      {reportImportResult.lstm_rows_parsed ? ` · ${reportImportResult.lstm_rows_parsed} LSTM sessions` : ''}
+                      {formatImportedAt(reportImportResult.importedAt) ? ` · ${formatImportedAt(reportImportResult.importedAt)}` : ''}
+                    </p>
+                    {reportImportResult.persistence_warning && !reportImportResult.db_persisted ? (
+                      <p className="text-xs text-amber-800 mt-1">Stored locally (cloud DB offline) — forecast still works.</p>
+                    ) : (
+                      <p className="text-xs text-emerald-700 mt-1">Data kept for this session — safe to navigate away.</p>
+                    )}
+                  </div>
+                </div>
+                <span className="inline-flex items-center gap-1 self-start sm:self-center px-3 py-1.5 rounded-full bg-emerald-600 text-white text-xs font-bold uppercase tracking-wider shrink-0">
+                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                  Active
+                </span>
+              </div>
+            ) : (
+              <div className="mt-5 flex flex-col sm:flex-row gap-3">
                 <input
                   ref={reportFileInputRef}
                   type="file"
-                  accept="image/*,.pdf"
+                  accept="image/*,.pdf,.csv"
                   onChange={(event) => {
                     const file = event.target.files?.[0] || null;
                     setSelectedReportFile(file);
                     setSelectedReportFileName(file?.name || '');
-                    setUploadedReportFileName('');
                     setReportError('');
-                    setReportImportResult(null);
                   }}
                   className="hidden"
                 />
                 <button
                   type="button"
                   onClick={() => reportFileInputRef.current?.click()}
-                  className={`rounded-xl border px-5 py-2.5 font-bold transition-colors max-w-full ${uploadedReportFileName ? 'border-emerald-300 bg-emerald-100 text-emerald-800' : selectedReportFileName ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
+                  className={`rounded-xl border px-5 py-2.5 font-bold transition-colors max-w-full flex-1 sm:flex-none ${selectedReportFileName ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
                 >
-                  {uploadedReportFileName ? (
-                    <span className="block truncate">Uploaded</span>
-                  ) : selectedReportFileName ? (
+                  {selectedReportFileName ? (
                     <span className="block truncate">Selected: {selectedReportFileName}</span>
                   ) : (
-                    'Choose PDF/Image'
+                    'Choose PDF/CSV/Image'
                   )}
                 </button>
                 <button
                   type="button"
                   onClick={() => handleReportUpload()}
                   disabled={isReportUploading}
-                  className={`rounded-xl px-5 py-2.5 text-white font-bold disabled:opacity-50 disabled:cursor-not-allowed ${uploadedReportFileName ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-primary'}`}
+                  className="rounded-xl px-5 py-2.5 bg-primary text-white font-bold disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {isReportUploading ? 'Importing...' : uploadedReportFileName ? 'Imported' : 'Import report'}
+                  {isReportUploading ? 'Importing…' : 'Import report'}
                 </button>
+                {hasUploadedReport ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowReportUploadForm(false)}
+                    className="rounded-xl border border-slate-300 px-5 py-2.5 font-bold text-slate-600 hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                ) : null}
               </div>
-            </div>
+            )}
 
-            <div className="mt-2 text-xs text-slate-500">
-              {selectedReportFileName ? `Selected file: ${selectedReportFileName}` : 'No file selected yet.'}
-            </div>
-
-            {uploadedReportFileName ? (
-              <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-100 px-3 py-2 text-xs text-emerald-800">
-                Uploaded
-              </div>
+            {showReportUploadForm && !hasUploadedReport ? (
+              <p className="mt-2 text-xs text-slate-500">
+                {selectedReportFileName ? `Selected file: ${selectedReportFileName}` : 'No file selected yet.'}
+              </p>
             ) : null}
 
             {reportError ? (
@@ -507,14 +694,33 @@ export default function DashboardPage() {
                     <p className="text-sm font-extrabold text-slate-800 mt-1">{structuredReport?.disease || 'Not found'}</p>
                   </div>
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">LSTM Sessions</p>
+                    <p className="text-sm font-extrabold text-slate-800 mt-1">
+                      {reportImportResult.lstm_rows_parsed ?? 0}
+                      {reportImportResult.persistence_warning && !reportImportResult.db_persisted ? (
+                        <span className="block text-xs font-normal text-amber-700 mt-1">Saved locally (DB offline)</span>
+                      ) : null}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Rows Imported</p>
                     <p className="text-sm font-extrabold text-slate-800 mt-1">{reportImportResult.imported_rows ?? 0}</p>
                   </div>
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Final Score</p>
+                    <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">
+                      {structuredReport?.hasParkinsonBiomarkers ? 'Latest Motor UPDRS' : 'Final Score'}
+                    </p>
                     <p className="text-sm font-extrabold text-slate-800 mt-1">
-                      {structuredReport?.finalScore ?? 'N/A'}
-                      {structuredReport?.finalStatus ? <span className="ml-1 text-xs text-slate-500">({structuredReport.finalStatus})</span> : null}
+                      {structuredReport?.hasParkinsonBiomarkers
+                        ? (structuredReport.lastMotor != null ? formatBioValue(structuredReport.lastMotor, 2) : 'N/A')
+                        : (structuredReport?.finalScore ?? 'N/A')}
+                      {structuredReport?.hasParkinsonBiomarkers && structuredReport.motorDelta != null ? (
+                        <span className={`ml-1 text-xs font-bold ${structuredReport.motorDelta > 0 ? 'text-red-600' : structuredReport.motorDelta < 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
+                          ({structuredReport.motorDelta > 0 ? '+' : ''}{formatBioValue(structuredReport.motorDelta, 2)} vs day 1)
+                        </span>
+                      ) : structuredReport?.finalStatus ? (
+                        <span className="ml-1 text-xs text-slate-500">({structuredReport.finalStatus})</span>
+                      ) : null}
                     </p>
                   </div>
                 </div>
@@ -528,27 +734,55 @@ export default function DashboardPage() {
                 {structuredReport?.rows?.length ? (
                   <div className="rounded-xl border border-slate-200 overflow-hidden">
                     <div className="bg-slate-50 border-b border-slate-200 px-4 py-3 text-sm font-bold text-slate-700">
-                      Analysed Patient's health history from reports ({structuredReport.rows.length})
+                      {structuredReport.hasParkinsonBiomarkers
+                        ? `Parkinson voice biomarkers from report (${structuredReport.rows.length} days)`
+                        : `Analysed patient's health history from reports (${structuredReport.rows.length})`}
                     </div>
                     <div className="max-h-[340px] overflow-auto">
                       <table className="w-full text-sm">
                         <thead className="bg-slate-100 sticky top-0 z-10">
                           <tr className="text-left text-slate-600">
                             <th className="px-4 py-3 font-bold">Day</th>
-                            <th className="px-4 py-3 font-bold">Breath Score</th>
-                            <th className="px-4 py-3 font-bold">Pause Score</th>
-                            <th className="px-4 py-3 font-bold">Speech Rate</th>
-                            <th className="px-4 py-3 font-bold">Health Score</th>
+                            {structuredReport.hasParkinsonBiomarkers ? (
+                              <>
+                                <th className="px-4 py-3 font-bold">Motor UPDRS</th>
+                                <th className="px-4 py-3 font-bold">Jitter (%)</th>
+                                <th className="px-4 py-3 font-bold">Shimmer</th>
+                                <th className="px-4 py-3 font-bold">HNR</th>
+                                <th className="px-4 py-3 font-bold">RPDE</th>
+                                <th className="px-4 py-3 font-bold">PPE</th>
+                              </>
+                            ) : (
+                              <>
+                                <th className="px-4 py-3 font-bold">Breath Score</th>
+                                <th className="px-4 py-3 font-bold">Pause Score</th>
+                                <th className="px-4 py-3 font-bold">Speech Rate</th>
+                                <th className="px-4 py-3 font-bold">Health Score</th>
+                              </>
+                            )}
                           </tr>
                         </thead>
                         <tbody>
                           {structuredReport.rows.map((row) => (
-                            <tr key={`pdf-row-${row.day}`} className="border-t border-slate-100">
+                            <tr key={`pdf-row-${row.day}`} className="border-t border-slate-100 hover:bg-slate-50/80">
                               <td className="px-4 py-2 font-semibold text-slate-700">Day {row.day}</td>
-                              <td className="px-4 py-2 text-slate-700">{Number.isFinite(row.breathScore) ? row.breathScore : 'N/A'}</td>
-                              <td className="px-4 py-2 text-slate-700">{Number.isFinite(row.pauseScore) ? row.pauseScore : 'N/A'}</td>
-                              <td className="px-4 py-2 text-slate-700">{Number.isFinite(row.speechRate) ? row.speechRate : 'N/A'}</td>
-                              <td className="px-4 py-2 font-bold text-slate-800">{Number.isFinite(row.healthScore) ? row.healthScore : 'N/A'}</td>
+                              {structuredReport.hasParkinsonBiomarkers ? (
+                                <>
+                                  <td className="px-4 py-2 font-bold text-violet-800">{formatBioValue(row.motorUpdrs, 2)}</td>
+                                  <td className="px-4 py-2 font-mono text-slate-700">{formatBioValue(row.jitter, 5)}</td>
+                                  <td className="px-4 py-2 font-mono text-slate-700">{formatBioValue(row.shimmer, 5)}</td>
+                                  <td className="px-4 py-2 font-mono text-slate-700">{formatBioValue(row.hnr, 2)}</td>
+                                  <td className="px-4 py-2 font-mono text-slate-700">{formatBioValue(row.rpde, 4)}</td>
+                                  <td className="px-4 py-2 font-mono text-slate-700">{formatBioValue(row.ppe, 4)}</td>
+                                </>
+                              ) : (
+                                <>
+                                  <td className="px-4 py-2 text-slate-700">{Number.isFinite(row.breathScore) ? row.breathScore : 'N/A'}</td>
+                                  <td className="px-4 py-2 text-slate-700">{Number.isFinite(row.pauseScore) ? row.pauseScore : 'N/A'}</td>
+                                  <td className="px-4 py-2 text-slate-700">{Number.isFinite(row.speechRate) ? row.speechRate : 'N/A'}</td>
+                                  <td className="px-4 py-2 font-bold text-slate-800">{Number.isFinite(row.healthScore) ? row.healthScore : 'N/A'}</td>
+                                </>
+                              )}
                             </tr>
                           ))}
                         </tbody>
@@ -617,15 +851,78 @@ export default function DashboardPage() {
                      <>Record at least 3 sessions to unlock baseline trends.</>
                    )}
                  </p>
-                 {parkinsonForecast && (
-                   <div className="mt-4 p-4 rounded-xl bg-primary/5 border border-primary/20 text-center max-w-[280px]">
-                     <p className="text-xs font-bold text-primary uppercase tracking-wider mb-2">7-Day Forecast</p>
-                     <p className="text-sm text-slate-700">Severity ~<span className="font-bold">{Math.round(parkinsonForecast.severity_7d)}</span>/100</p>
-                     <p className="text-xs text-slate-500 mt-1">Stability {(Number(parkinsonForecast.stability_score || 0) * 100).toFixed(0)}%</p>
-                   </div>
-                 )}
               </div>
             </div>
+
+            {profile?.conditionId === 'parkinsons' && (
+              <div className="lg:col-span-12 bg-gradient-to-br from-violet-50 to-purple-50 border border-violet-200 rounded-[18px] p-6 lg:p-8 shadow-sm">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+                  <div>
+                    <h3 className="font-headline font-extrabold text-xl text-violet-900 flex items-center gap-2">
+                      <span className="material-symbols-outlined">neurology</span>
+                      Motor UPDRS Progression Forecast
+                    </h3>
+                    <p className="text-sm text-violet-800/80 mt-2 max-w-xl">
+                      Predicts your future motor UPDRS from your last {lstmSessionsRequired} sessions with complete voice biomarker history.
+                    </p>
+                    <p className="text-xs font-bold text-violet-700 uppercase tracking-wider mt-3">
+                      {lstmSessionsAvailable}/{lstmSessionsRequired} sessions recorded
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleForecastProgression}
+                    disabled={!lstmForecastReady || isForecastLoading}
+                    className="shrink-0 px-6 py-3 rounded-xl bg-violet-600 text-white font-bold text-sm uppercase tracking-wider hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {isForecastLoading ? 'Forecasting…' : 'Forecast Progression'}
+                  </button>
+                </div>
+
+                {!lstmForecastReady && (
+                  <div className="mt-5 rounded-xl border border-violet-200 bg-white/70 p-4 text-sm text-violet-900">
+                    {forecastStatus?.message || `Record or import ${lstmSessionsRequired - lstmSessionsAvailable} more session(s) to unlock forecasting.`}
+                  </div>
+                )}
+
+                {forecastError && (
+                  <div className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                    {forecastError}
+                  </div>
+                )}
+
+                {(forecastResult?.ready || (forecastResult?.predicted_motor_updrs != null)) && (
+                  <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="rounded-xl border border-violet-200 bg-white p-5 text-center">
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Current motor UPDRS</p>
+                      <p className="text-3xl font-black text-violet-800 mt-2">{Number(currentMotorUpdrs).toFixed(1)}</p>
+                    </div>
+                    <div className="rounded-xl border border-violet-200 bg-white p-5 text-center">
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Predicted motor UPDRS</p>
+                      <p className="text-3xl font-black text-purple-700 mt-2">{Number(forecastResult.predicted_motor_updrs).toFixed(1)}</p>
+                    </div>
+                    <div className="rounded-xl border border-violet-200 bg-white p-5 text-center">
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Difference</p>
+                      <p className={`text-3xl font-black mt-2 ${forecastResult.delta > 0 ? 'text-red-600' : forecastResult.delta < 0 ? 'text-emerald-600' : 'text-slate-700'}`}>
+                        {forecastResult.delta > 0 ? '+' : ''}{Number(forecastResult.delta).toFixed(1)}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-violet-200 bg-white p-5 text-center">
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Trend</p>
+                      <p className={`text-2xl font-black mt-2 flex items-center justify-center gap-1 ${
+                        forecastResult.trend === 'Worsening' ? 'text-red-600' :
+                        forecastResult.trend === 'Improving' ? 'text-emerald-600' : 'text-slate-700'
+                      }`}>
+                        {forecastResult.trend}
+                        <span className="material-symbols-outlined text-[22px]">
+                          {forecastResult.trend === 'Worsening' ? 'trending_up' : forecastResult.trend === 'Improving' ? 'trending_down' : 'trending_flat'}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="lg:col-span-8 bg-surface-container-lowest border border-gray-100 rounded-[18px] p-6 lg:p-8 flex flex-col hover-lift shadow-sm relative">
               <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-8 z-10 w-full">

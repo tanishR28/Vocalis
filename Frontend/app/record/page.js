@@ -9,6 +9,52 @@ import RecordingInstructions from '../components/RecordingInstructions';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const DEFAULT_RECORDING_SECONDS = 15;
 
+const PARKINSONS_MANUAL_SAMPLE = {
+  age: 72,
+  sex: 0,
+  test_time: 5.6431,
+  'Jitter(%)': 0.00662,
+  'Jitter(Abs)': 0.0000338,
+  'Jitter:RAP': 0.00401,
+  'Jitter:PPQ5': 0.00317,
+  'Jitter:DDP': 0.01204,
+  Shimmer: 0.02565,
+  'Shimmer(dB)': 0.23,
+  'Shimmer:APQ3': 0.01438,
+  'Shimmer:APQ5': 0.01309,
+  'Shimmer:APQ11': 0.01662,
+  'Shimmer:DDA': 0.04314,
+  NHR: 0.01429,
+  HNR: 21.64,
+  RPDE: 0.41888,
+  DFA: 0.54842,
+  PPE: 0.16006,
+};
+
+const LIBROSA_MANUAL_SAMPLE = {
+  mfcc_1: -5.2,
+  mfcc_2: 3.1,
+  mfcc_3: -1.4,
+  mfcc_4: 2.0,
+  mfcc_5: -0.8,
+  mfcc_6: 1.2,
+  mfcc_7: -0.5,
+  mfcc_8: 0.9,
+  mfcc_9: -1.1,
+  mfcc_10: 0.4,
+  mfcc_11: -0.3,
+  mfcc_12: 0.6,
+  mfcc_13: -0.2,
+  pitch_mean: 180,
+  pitch_std: 0.35,
+  jitter: 0.012,
+  shimmer: 0.04,
+  hnr: 18,
+  speech_rate: 0.42,
+  pause_count: 4,
+  avg_pause_len: 0.35,
+};
+
 function parseExtractedMedicalReport(rawText) {
   const text = String(rawText || '');
   if (!text.trim()) {
@@ -104,6 +150,9 @@ export default function RecordPage() {
   const [documentResult, setDocumentResult] = useState(null);
   const [mode, setMode] = useState('voice');
   const [selectedFile, setSelectedFile] = useState(null);
+  const [showManualDev, setShowManualDev] = useState(false);
+  const [manualFeaturesJson, setManualFeaturesJson] = useState('');
+  const [isManualAnalyzing, setIsManualAnalyzing] = useState(false);
 
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
@@ -125,6 +174,19 @@ export default function RecordPage() {
   useEffect(() => {
     setProfile(getProfile());
   }, []);
+
+  useEffect(() => {
+    if (!condition) return;
+    const base =
+      condition.id === 'parkinsons'
+        ? {
+            ...PARKINSONS_MANUAL_SAMPLE,
+            age: profile?.age ?? PARKINSONS_MANUAL_SAMPLE.age,
+            sex: profile?.sex ?? PARKINSONS_MANUAL_SAMPLE.sex,
+          }
+        : LIBROSA_MANUAL_SAMPLE;
+    setManualFeaturesJson(JSON.stringify(base, null, 2));
+  }, [condition?.id, profile?.age, profile?.sex]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -317,6 +379,59 @@ export default function RecordPage() {
     }
   };
 
+  const processManualBackend = async () => {
+    if (!selectedDisease) {
+      setError('Complete onboarding first to set your monitoring condition.');
+      router.push('/onboarding');
+      return;
+    }
+
+    setIsManualAnalyzing(true);
+    setError('');
+    setAnalysisResult(null);
+
+    try {
+      let features;
+      try {
+        features = JSON.parse(manualFeaturesJson);
+      } catch {
+        throw new Error('Invalid JSON in manual features. Check commas and quotes.');
+      }
+      if (!features || typeof features !== 'object' || Array.isArray(features)) {
+        throw new Error('Manual features must be a JSON object.');
+      }
+
+      const payload = {
+        disease: selectedDisease,
+        features,
+      };
+      if (profile?.age != null) payload.age = profile.age;
+      if (profile?.sex === 0 || profile?.sex === 1) payload.sex = profile.sex;
+      if (profile?.onboardedAt) payload.onboarded_at = profile.onboardedAt;
+
+      const response = await fetch(`${API_URL}/api/analyze-manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const txt = await response.text();
+        throw new Error(`API Error ${response.status}: ${txt}`);
+      }
+
+      const data = await response.json();
+      localStorage.setItem('vocalis_latest_analysis', JSON.stringify(data));
+      localStorage.setItem('vocalis_just_updated', 'true');
+      setAnalysisResult(data);
+    } catch (err) {
+      console.error('Manual analysis error:', err);
+      setError(err.message || 'Failed to run manual analysis.');
+    } finally {
+      setIsManualAnalyzing(false);
+    }
+  };
+
   return (
     <div className="relative w-full max-w-5xl mx-auto px-4 sm:px-6 py-4 pb-28 md:pb-10">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
@@ -429,6 +544,49 @@ export default function RecordPage() {
               </p>
             </div>
           )}
+
+          {condition && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/80 shadow-sm overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowManualDev((v) => !v)}
+                className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-amber-100/60 transition-colors"
+              >
+                <div>
+                  <p className="text-xs font-bold text-amber-800 uppercase tracking-wider">Temporary — dev only</p>
+                  <p className="text-sm font-semibold text-amber-900 mt-0.5">Manual feature values (no recording)</p>
+                </div>
+                <span className="material-symbols-outlined text-amber-700">
+                  {showManualDev ? 'expand_less' : 'expand_more'}
+                </span>
+              </button>
+
+              {showManualDev && (
+                <div className="px-5 pb-5 border-t border-amber-200/80 space-y-3">
+                  <p className="text-xs text-amber-800 pt-3 leading-relaxed">
+                    {condition.id === 'parkinsons'
+                      ? 'Paste Oxford telemonitoring features (age, sex, test_time + 16 voice columns). Sample values are from the UCI dataset.'
+                      : 'Paste librosa feature values (mfcc_1…mfcc_13, pitch_mean, jitter, etc.).'}
+                  </p>
+                  <textarea
+                    value={manualFeaturesJson}
+                    onChange={(e) => setManualFeaturesJson(e.target.value)}
+                    rows={12}
+                    spellCheck={false}
+                    className="w-full font-mono text-xs rounded-lg border border-amber-300 bg-white p-3 text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={processManualBackend}
+                    disabled={isManualAnalyzing || isAnalyzing || isRecording}
+                    className="w-full py-3 rounded-xl bg-amber-600 text-white font-bold text-sm uppercase tracking-wider hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {isManualAnalyzing ? 'Analyzing…' : 'Run analysis with values'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -525,7 +683,7 @@ export default function RecordPage() {
         <Link href="/">
           <button
             type="button"
-            disabled={isRecording || isAnalyzing}
+            disabled={isRecording || isAnalyzing || isManualAnalyzing}
             className="px-6 py-2.5 rounded-xl text-slate-500 font-semibold hover:bg-slate-100 transition-colors disabled:opacity-30"
           >
             Return to dashboard

@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ml_config import model_paths, OXFORD_FEATURE_COLUMNS
+from ml_config import model_paths, OXFORD_FEATURE_COLUMNS, load_lstm_feature_columns
 from preprocessing.features import (
     extract_signal_features,
     get_disease_biomarkers,
@@ -60,6 +60,18 @@ def _derive_sub_scores(voice: Dict[str, float], severity: float) -> Dict[str, fl
     }
 
 
+def build_lstm_row(updrs_row: Dict[str, Any], motor_updrs: float) -> Dict[str, Any]:
+    """Build a 19-field LSTM history row from UPDRS inference output."""
+    lstm_columns = load_lstm_feature_columns()
+    row: Dict[str, Any] = {}
+    for col in lstm_columns:
+        if col == "motor_UPDRS":
+            row[col] = float(motor_updrs)
+        elif col in updrs_row and updrs_row[col] is not None:
+            row[col] = int(updrs_row[col]) if col in ("age", "sex") else float(updrs_row[col])
+    return row
+
+
 class UPDRSPredictor:
     def __init__(self):
         paths = model_paths("parkinsons")
@@ -81,6 +93,88 @@ class UPDRSPredictor:
     @property
     def ready(self) -> bool:
         return self.model is not None
+
+    def predict_from_row(
+        self,
+        feature_row: Dict[str, Any],
+        patient_meta: Optional[Dict[str, Any]] = None,
+    ) -> dict:
+        """Run UPDRS model on a pre-built Oxford feature row (no audio)."""
+        if not self.ready:
+            raise FileNotFoundError(
+                f"UPDRS model missing: {self.model_path}. "
+                "Train with notebooks/parkinsons_xgboost.ipynb and export artifacts."
+            )
+
+        meta = patient_meta or {}
+        row: Dict[str, Any] = {}
+        for col in self.feature_columns:
+            if col in feature_row and feature_row[col] is not None:
+                row[col] = feature_row[col]
+            elif col == "age":
+                row[col] = meta.get("age")
+            elif col == "sex":
+                row[col] = meta.get("sex")
+            elif col == "test_time":
+                row[col] = float(meta.get("test_time_days", 0.0))
+            else:
+                row[col] = 0.0
+
+        if row.get("age") is None or row.get("sex") is None:
+            raise ValueError(
+                "Parkinson's UPDRS model requires age and sex in features or patient profile."
+            )
+
+        row["age"] = int(row["age"])
+        row["sex"] = int(row["sex"])
+        row["test_time"] = float(row.get("test_time", 0.0))
+
+        X = pd.DataFrame([row], columns=self.feature_columns)
+        motor_updrs = float(self.model.predict(X)[0])
+
+        voice_feats = {k: float(row[k]) for k in OXFORD_VOICE_COLUMNS if k in row}
+        severity = _updrs_to_severity(motor_updrs, self.scale)
+        sub = _derive_sub_scores(voice_feats, severity)
+        confidence = float(np.clip(0.95 - abs(motor_updrs - 25) / 100, 0.7, 0.95))
+
+        bios = {
+            "tremor": float(np.clip(voice_feats.get("Jitter(%)", 0) / 5, 0, 1)),
+            "speech_rate": 0.5,
+            "pause_patterns": 0.3,
+            "pitch_variation": 0.4,
+            "SIGNATURE_DETECTED": bool(voice_feats.get("Jitter(%)", 0) > 0.01),
+        }
+        signal_map = {
+            "jitter": float(voice_feats.get("Jitter(%)", 0)),
+            "shimmer": float(voice_feats.get("Shimmer", 0)),
+            "hnr": float(voice_feats.get("HNR", 20)),
+            "pitch_std": 0.4,
+            "speech_rate": 0.5,
+            "pause_count": 3,
+            "avg_pause_len": 0.3,
+        }
+        lstm_row = build_lstm_row(row, motor_updrs)
+
+        return {
+            "severity": severity,
+            "stage": severity_to_stage(severity),
+            "confidence": confidence,
+            "speech_score": sub["speech_score"],
+            "breathlessness_score": sub["breathlessness_score"],
+            "tremor_score": sub["tremor_score"],
+            "health_score": int(np.clip(100 - severity, 0, 100)),
+            "disease_score": severity / 100,
+            "motor_updrs": motor_updrs,
+            "prediction": _prediction_label(severity),
+            "risk_level": _risk_level(severity),
+            "biomarkers": bios,
+            "duration": 0.0,
+            "signature_detected": bool(bios.get("SIGNATURE_DETECTED", False)),
+            "signals": signal_map,
+            "oxford_features": voice_feats,
+            "lstm_row": lstm_row,
+            "model_source": "updrs_xgboost_manual",
+        }
 
     def predict(self, audio_path: str, patient_meta: Optional[Dict[str, Any]] = None) -> dict:
         if not self.ready:
@@ -128,6 +222,8 @@ class UPDRSPredictor:
             signal_map = {}
             duration = 0.0
 
+        lstm_row = build_lstm_row(row, motor_updrs)
+
         return {
             "severity": severity,
             "stage": severity_to_stage(severity),
@@ -145,5 +241,6 @@ class UPDRSPredictor:
             "signature_detected": bool(bios.get("SIGNATURE_DETECTED", False)),
             "signals": signal_map,
             "oxford_features": voice_feats,
+            "lstm_row": lstm_row,
             "model_source": "updrs_xgboost",
         }

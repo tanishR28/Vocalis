@@ -46,3 +46,30 @@ class AnalysisRequest(BaseModel):
     user_id: Optional[str] = None
     condition: Optional[str] = None
     notes: Optional[str] = None
+
+
+class ManualAnalysisRequest(BaseModel):
+    """Manual feature values for dev/testing without audio."""
+    disease: str
+    features: Dict[str, Any] = Field(default_factory=dict)
+    user_id: Optional[str] = None
+    age: Optional[int] = None
+    sex: Optional[int] = None
+    onboarded_at: Optional[str] = None
+
+
+class ParkinsonForecastRequest(BaseModel):
+    """Request for Parkinson LSTM progression forecast."""
+    user_id: Optional[str] = None
+
+
+class ParkinsonForecastResponse(BaseModel):
+    """Parkinson LSTM motor_UPDRS forecast result."""
+    ready: bool = False
+    predicted_motor_updrs: Optional[float] = None
+    current_motor_updrs: Optional[float] = None
+    delta: Optional[float] = None
+    trend: Optional[str] = None
+    sessions_available: int = 0
+    sessions_required: int = 10
+    message: Optional[str] = None

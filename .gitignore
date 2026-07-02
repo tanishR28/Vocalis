@@ -28,6 +28,9 @@ build/
 venv/
 env/
 backend/.venv/
+
+# Local LSTM history fallback (dev without Supabase)
+backend/.data/
 backend/venv/
 ML/.venv/
 ML/venv/

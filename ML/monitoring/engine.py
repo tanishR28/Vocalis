@@ -1,16 +1,14 @@
-"""Monitoring engine — trends, alerts, Parkinson LSTM forecast."""
+"""Monitoring engine — trends and alerts."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import numpy as np
-
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ml_config import LSTM_MIN_DAYS, BASELINE_DAYS, model_paths
+from ml_config import BASELINE_DAYS
 from monitoring.trend import (
     compute_baseline,
     vs_yesterday,
@@ -18,48 +16,6 @@ from monitoring.trend import (
     trend_label,
     risk_level,
 )
-
-
-def _lstm_forecast(history: List[Dict[str, Any]]) -> Optional[Dict[str, float]]:
-    lstm_path = model_paths("parkinsons")["lstm"]
-    if not lstm_path.exists() or len(history) < LSTM_MIN_DAYS:
-        return None
-    try:
-        import tensorflow as tf
-    except ImportError:
-        return None
-
-    try:
-        model = tf.keras.models.load_model(lstm_path)
-        seq_rows = history[:LSTM_MIN_DAYS][::-1]
-        features = []
-        for row in seq_rows:
-            bio = row.get("biomarkers") or row.get("raw_features", {}).get("biomarkers") or {}
-            sig = row.get("signals") or row.get("raw_features", {}).get("signals") or {}
-            severity = float(row.get("severity") or (100 - float(row.get("health_score", 50))))
-            speech = float(row.get("speech_score") or (100 - severity))
-            tremor = float(row.get("tremor_score") or bio.get("tremor", 0) * 100)
-            features.append([
-                float(sig.get("pitch_mean", row.get("pitch_mean", 150))),
-                float(sig.get("jitter", row.get("jitter", 0.01))),
-                float(sig.get("shimmer", row.get("shimmer", 0.1))),
-                float(bio.get("speech_rate", sig.get("speech_rate", row.get("speech_rate", 0.5)))),
-                severity,
-                speech,
-                tremor,
-                tremor * 0.5,
-            ])
-
-        X = np.array([features], dtype=np.float32)
-        preds = model.predict(X, verbose=0)[0]
-        return {
-            "severity_7d": float(np.clip(preds[0], 0, 100)),
-            "severity_30d": float(np.clip(preds[1], 0, 100)),
-            "deterioration_risk": float(np.clip(preds[2], 0, 1)),
-            "stability_score": float(np.clip(preds[3], 0, 1)),
-        }
-    except Exception:
-        return None
 
 
 def build_alerts(
@@ -111,10 +67,6 @@ def analyze_trends(
     risk = risk_level(trend, health_score, severity)
     alerts = build_alerts(trend, risk, health_score, severity, vs_base)
 
-    forecast = None
-    if condition_key == "parkinsons":
-        forecast = _lstm_forecast(history)
-
     return {
         "baseline": baseline,
         "vs_yesterday": vy,
@@ -126,5 +78,5 @@ def analyze_trends(
         "alerts": alerts,
         "baseline_ready": baseline is not None,
         "weekly_ready": weekly is not None,
-        "forecast": forecast,
+        "forecast": None,
     }

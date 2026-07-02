@@ -14,6 +14,7 @@ from config import get_cors_origins
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 from routers.analysis import router as analysis_router
+from routers.forecast import router as forecast_router
 
 app = FastAPI(
     title="Voice Biomarker API",
@@ -35,6 +36,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(analysis_router)
+app.include_router(forecast_router)
 
 
 @app.get("/")
