@@ -92,23 +92,37 @@ export function saveReportImport(apiResponse, userId = null) {
 }
 
 export function clearReportImport(userId = null) {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined') return false;
+
+  let changed = false;
   if (userId) {
+    if (localStorage.getItem(scopedImportKey(userId))) changed = true;
+    if (localStorage.getItem(scopedDismissKey(userId))) changed = true;
     localStorage.removeItem(scopedImportKey(userId));
     localStorage.removeItem(scopedDismissKey(userId));
   } else {
+    if (localStorage.getItem(LEGACY_REPORT_IMPORT_KEY)) changed = true;
+    if (localStorage.getItem(DASHBOARD_IMPORT_DISMISS_KEY)) changed = true;
     localStorage.removeItem(LEGACY_REPORT_IMPORT_KEY);
     localStorage.removeItem(DASHBOARD_IMPORT_DISMISS_KEY);
   }
-  notifyReportImportChange();
+
+  if (changed) notifyReportImportChange();
+  return changed;
 }
 
 /** Drop anonymous/legacy import cache when a real user signs in. */
 export function clearLegacyReportImport() {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined') return false;
+
+  let changed = false;
+  if (localStorage.getItem(LEGACY_REPORT_IMPORT_KEY)) changed = true;
+  if (localStorage.getItem(DASHBOARD_IMPORT_DISMISS_KEY)) changed = true;
   localStorage.removeItem(LEGACY_REPORT_IMPORT_KEY);
   localStorage.removeItem(DASHBOARD_IMPORT_DISMISS_KEY);
-  notifyReportImportChange();
+
+  if (changed) notifyReportImportChange();
+  return changed;
 }
 
 export function onAuthUserChanged(userId) {

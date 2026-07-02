@@ -23,10 +23,13 @@ ml_model_dir = str(ML_DIR)
 if ml_model_dir not in sys.path:
     sys.path.insert(0, ml_model_dir)
 
+LSTM_IMPORT_ERROR: Optional[str] = None
+
 try:
     from ml_config import lstm_sequence_length  # type: ignore
     from inference.predict_parkinsons_lstm import forecast_parkinsons, get_forecaster  # type: ignore
 except ImportError as import_error:
+    LSTM_IMPORT_ERROR = str(import_error)
     print(f"[ERROR] Failed to import LSTM forecaster from {ml_model_dir}: {import_error}")
     lstm_sequence_length = lambda: 10  # type: ignore
     forecast_parkinsons = None  # type: ignore
@@ -60,9 +63,10 @@ async def forecast_parkinsons_progression(
             )
 
         if forecast_parkinsons is None or get_forecaster is None or not get_forecaster().ready:
+            detail = LSTM_IMPORT_ERROR or "Model or scaler failed to load from ML/models/"
             return JSONResponse(
                 status_code=500,
-                content={"error": f"LSTM forecaster failed to load. Checked path: {ml_model_dir}"},
+                content={"error": f"LSTM forecaster failed to load. {detail} (path: {ml_model_dir})"},
             )
 
         result = forecast_parkinsons(history_rows)

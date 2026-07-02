@@ -30,9 +30,6 @@ export function explainDiagnosticStatus(status) {
   if (key.includes('COUGH')) {
     return 'Cough-like acoustic patterns were detected in this recording.';
   }
-  if (key.includes('WHEEZE')) {
-    return 'Wheeze-like acoustic patterns were detected in this recording.';
-  }
   return 'Summary label from the voice analysis model for this session.';
 }
 
@@ -40,9 +37,9 @@ export function getDiagnosticStatusPresentation(status, severity = null) {
   const key = normalizeStatus(status);
   const sev = Number(severity);
 
-  if (key === 'YES' || key.includes('COUGH') || key.includes('WHEEZE')) {
+  if (key === 'YES' || key.includes('COUGH')) {
     return {
-      title: key.includes('COUGH') ? 'Cough detected' : key.includes('WHEEZE') ? 'Wheeze detected' : 'Elevated concern',
+      title: key.includes('COUGH') ? 'Cough detected' : 'Elevated concern',
       subtitle: key,
       cardClass: 'bg-gradient-to-br from-red-50 to-red-100/70 border-red-200',
       textClass: 'text-red-800',

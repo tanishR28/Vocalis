@@ -7,6 +7,10 @@ import ApiAuthBridge from './components/ApiAuthBridge';
 export const metadata = {
   title: 'Vocalis',
   description: 'AI-powered voice biomarker monitoring',
+  icons: {
+    icon: '/logo_bordered.png',
+    apple: '/logo_bordered.png',
+  },
 };
 
 export default function RootLayout({ children }) {

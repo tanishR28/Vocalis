@@ -4,6 +4,7 @@ import {
   getClinicalInsightsFromBiomarkers,
   insightLevel,
 } from './clinicalInsights';
+import { toDayKey } from './sessionCalendar';
 
 export const TIME_RANGES = {
   '7d': { label: '7 days', days: 7, limit: 7 },
@@ -47,12 +48,12 @@ function parseTimestamp(value) {
 }
 
 function dayKey(value) {
-  const date = parseTimestamp(value);
-  if (!date) return null;
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  return toDayKey(value);
+}
+
+function chartDateFromDayKey(key) {
+  const [year, month, day] = key.split('-').map(Number);
+  return new Date(year, month - 1, day, 12, 0, 0).toISOString();
 }
 
 const DAILY_AVG_NUMERIC_KEYS = [
@@ -90,9 +91,12 @@ export function aggregateTimelineByDay(rows) {
 
   const aggregated = [];
   for (const [key, sessions] of byDay) {
+    const normalizedDate = chartDateFromDayKey(key);
     if (sessions.length === 1) {
       aggregated.push({
         ...sessions[0],
+        date: normalizedDate,
+        dateLabel: formatAxisDate(normalizedDate),
         session_count: 1,
         session_ids: [sessions[0].id],
         is_daily_average: false,
@@ -110,9 +114,8 @@ export function aggregateTimelineByDay(rows) {
     averaged.session_ids = sessions.map((s) => s.id);
     averaged.is_daily_average = true;
     averaged.title = `${sessions.length} sessions (daily avg)`;
-    const [year, month, day] = key.split('-').map(Number);
-    averaged.date = new Date(year, month - 1, day, 12, 0, 0).toISOString();
-    averaged.dateLabel = formatAxisDate(averaged.date);
+    averaged.date = normalizedDate;
+    averaged.dateLabel = formatAxisDate(normalizedDate);
     aggregated.push(averaged);
   }
 
@@ -153,9 +156,7 @@ export function buildInsightsTimeline(historyItems, rangeKey = '30d', { aggregat
     return ts != null && ts >= cutoff;
   });
 
-  const limited = range.limit ? filtered.slice(-range.limit) : filtered;
-
-  const sessionRows = limited.map((item, index, arr) => {
+  const sessionRows = filtered.map((item, index, arr) => {
     const biomarkers = item.biomarkers || {};
     const raw = biomarkers.raw_features || {};
     const signals = raw.signals || {};
@@ -205,7 +206,8 @@ export function buildInsightsTimeline(historyItems, rangeKey = '30d', { aggregat
     return row;
   });
 
-  return aggregateByDay ? aggregateTimelineByDay(sessionRows) : sessionRows;
+  const aggregated = aggregateByDay ? aggregateTimelineByDay(sessionRows) : sessionRows;
+  return range.limit ? aggregated.slice(-range.limit) : aggregated;
 }
 
 export function formatAxisDate(value) {

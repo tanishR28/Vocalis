@@ -24,24 +24,59 @@ def detect_wheeze(y, sr):
 
 
 def detect_cough_bursts(y, sr):
-    rms = librosa.feature.rms(y=y)[0]
-    flatness = librosa.feature.spectral_flatness(y=y)[0]
-    zcr = librosa.feature.zero_crossing_rate(y=y)[0]
-    rms_threshold = np.mean(rms) + 1.5 * np.std(rms)
-    potential_frames = np.where(rms > rms_threshold)[0]
-    if len(potential_frames) < 2:
+    """Detect cough-like impulsive bursts (works with a single cough in a short clip)."""
+    if len(y) < sr // 10:
         return False
+
+    hop = 512
+    frame = 2048
+    rms = librosa.feature.rms(y=y, frame_length=frame, hop_length=hop)[0]
+    if len(rms) < 8:
+        return False
+
+    flatness = librosa.feature.spectral_flatness(y=y, hop_length=hop)[0]
+    zcr = librosa.feature.zero_crossing_rate(y=y, frame_length=frame, hop_length=hop)[0]
+    onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop)
+
+    rms_median = float(np.median(rms))
+    rms_std = float(np.std(rms))
+    impulse_threshold = max(rms_median + 1.1 * rms_std, rms_median * 2.2, 0.015)
+    onset_cutoff = float(np.percentile(onset_env, 82)) if len(onset_env) else 0.0
+
     burst_count = 0
     in_burst = False
-    for idx in potential_frames:
-        is_cough_like = (flatness[idx] > 0.05) and (zcr[idx] > 0.05)
-        if is_cough_like:
+    n = min(len(rms), len(flatness), len(zcr), len(onset_env))
+    for idx in range(n):
+        loud = rms[idx] > impulse_threshold
+        cough_like = loud and (
+            flatness[idx] > 0.03
+            or zcr[idx] > 0.035
+            or onset_env[idx] >= onset_cutoff
+        )
+        if cough_like:
             if not in_burst:
                 burst_count += 1
                 in_burst = True
         else:
             in_burst = False
-    return burst_count >= 2
+
+    if burst_count >= 1:
+        return True
+
+    peaks = librosa.util.peak_pick(
+        onset_env,
+        pre_max=3,
+        post_max=3,
+        pre_avg=3,
+        post_avg=5,
+        delta=0.04,
+        wait=8,
+    )
+    for peak in peaks:
+        if peak < n and rms[peak] > impulse_threshold and flatness[peak] > 0.025:
+            return True
+
+    return False
 
 
 def extract_signal_features(audio_path):
@@ -119,8 +154,6 @@ def get_disease_biomarkers(meta, condition, signatures):
     if condition == "Asthma":
         breath = np.clip(1 - (m["hnr_db"] + 10) / 40, 0, 1.0)
         noise = np.clip(1 - m["hnr_db"] / 20, 0, 1)
-        if s["wheeze"]:
-            noise = min(1.0, noise + 0.3)
         c_flag = s["cough"]
         if c_flag:
             breath, noise = min(breath, 0.3), min(noise, 0.3)
@@ -131,7 +164,7 @@ def get_disease_biomarkers(meta, condition, signatures):
             "wheeze_noise": noise,
             "energy_decay": 0.2,
             "cough_detected": c_flag,
-            "SIGNATURE_DETECTED": s["wheeze"] or s["cough"],
+            "SIGNATURE_DETECTED": c_flag,
         }
     if condition == "Depression":
         monotony = 1 - m["pitch_var"]

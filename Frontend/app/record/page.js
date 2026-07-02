@@ -640,18 +640,11 @@ export default function RecordPage() {
                       </span>
                       <p className={`text-2xl font-bold tracking-tight text-center mt-2 ${statusStyle.textClass}`}>{statusStyle.title}</p>
                       <p className="text-xs text-slate-600 text-center leading-relaxed px-2">{statusHelp}</p>
-                      {condition?.id === 'asthma' && (analysisResult.cough_detected || analysisResult.wheeze_detected) && (
+                      {condition?.id === 'asthma' && analysisResult.cough_detected && (
                         <div className="flex flex-wrap gap-2 justify-center mt-1">
-                          {analysisResult.cough_detected && (
-                            <span className="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
-                              Cough signature
-                            </span>
-                          )}
-                          {analysisResult.wheeze_detected && (
-                            <span className="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-sky-100 text-sky-800 border border-sky-200">
-                              Wheeze signature
-                            </span>
-                          )}
+                          <span className="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                            Cough signature
+                          </span>
                         </div>
                       )}
                     </div>
@@ -685,7 +678,7 @@ export default function RecordPage() {
                      <div className="space-y-6">
                        {(condition?.resultBars || []).map((item, idx) => {
                          const raw = analysisResult[item.key];
-                         const isFlag = item.max === 1 && (item.key === 'cough_detected' || item.key === 'wheeze_detected');
+                         const isFlag = item.max === 1 && item.key === 'cough_detected';
                          const display = isFlag ? (raw ? 'Yes' : 'No') : Number(raw || 0).toFixed(3);
                          const width = isFlag ? (raw ? 100 : 0) : Math.min(100, Math.max(0, ((raw || 0) / item.max) * 100));
                          return (

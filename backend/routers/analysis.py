@@ -24,21 +24,10 @@ from supabase import Client, create_client
 from config import ML_DIR
 from services.lstm_history import (
     is_complete_lstm_row,
-    save_local_lstm_history,
-    append_local_lstm_row,
-    lstm_sequence_length,
-    set_active_import,
     remove_imported_medical_history,
-    fetch_local_history_items,
-    is_import_active,
     get_import_status,
 )
-from services.clinical_history import (
-    build_clinical_insights,
-    save_clinical_session,
-    fetch_clinical_history_items,
-    merge_local_history_items,
-)
+from services.clinical_history import build_clinical_insights
 from services.parkinson_export import (
     build_parkinson_history_export,
     render_export_csv,
@@ -570,20 +559,7 @@ def _persist_document_rows_to_supabase(
     if not rows:
         return True, 0, None
 
-    lstm_rows = [row["lstm_row"] for row in rows if is_complete_lstm_row(row.get("lstm_row"))]
-    local_saved = 0
-    if lstm_rows:
-        local_saved = save_local_lstm_history(
-            lstm_rows,
-            user_id,
-            replace=True,
-            source="imported",
-        )
-        set_active_import(filename, len(lstm_rows), user_id)
-
     if supabase is None:
-        if local_saved:
-            return True, local_saved, None
         return False, 0, _supabase_unavailable_error()
 
     condition = report.get("disease") or (detections[0].get("condition") if detections else "Imported Record")
@@ -656,8 +632,6 @@ def _persist_document_rows_to_supabase(
         supabase.table("biomarkers").insert(biomarkers_payload).execute()
         return True, len(rows), None
     except Exception as db_error:
-        if local_saved:
-            return True, local_saved, str(db_error)
         return False, 0, str(db_error)
 
 
@@ -781,28 +755,12 @@ def _persist_analysis_to_supabase(
     signals: Dict[str, Any],
     health_score: int,
 ) -> Tuple[bool, Optional[str]]:
-    if is_complete_lstm_row(report.get("lstm_row")):
-        append_local_lstm_row(report["lstm_row"], user_id)
+    if supabase is None:
+        return False, _supabase_unavailable_error()
 
     biomarkers = report.get("biomarkers", {}) or {}
     scores = _biomarker_values(biomarkers, signals)
     clinical_insights = build_clinical_insights(biomarkers, signals, scores, report)
-    save_clinical_session(
-        user_id=user_id,
-        recording_id=recording_id,
-        disease=disease,
-        duration=duration,
-        analyzed_at_iso=analyzed_at_iso,
-        health_score=float(health_score),
-        health_category=str(report.get("risk_level", "Unknown")),
-        report=report,
-        signals=json_safe(signals) if isinstance(signals, dict) else signals,
-        scores=scores,
-        clinical_insights=json_safe(clinical_insights),
-    )
-
-    if supabase is None:
-        return True, None
 
     try:
         recording_payload = {
@@ -950,13 +908,11 @@ def _finalize_analysis(
 
     sig_val = 1.0 if report.get("signature_detected") else 0.0
     cough_detected = bool(report.get("cough_detected"))
-    wheeze_detected = bool(report.get("wheeze_detected"))
+    wheeze_detected = False if target_disease == "Asthma" else bool(report.get("wheeze_detected"))
     status = str(report.get("prediction", "Unknown"))
     if target_disease == "Asthma":
         if cough_detected:
             status = "COUGH DETECTED"
-        elif wheeze_detected:
-            status = "WHEEZE DETECTED"
     analyzed_at = datetime.utcnow().isoformat()
 
     db_saved, db_error = _persist_analysis_to_supabase(
@@ -1028,108 +984,72 @@ async def get_history(
     if bearer_sent and not user_id:
         return {"items": []}
 
+    if supabase is None:
+        return {"items": []}
+
     items: list[dict[str, Any]] = []
     fetch_limit = max(1, min(limit, 100))
 
-    if supabase is not None and not user_id:
-        try:
-            local_items = merge_local_history_items(
-                fetch_local_history_items(user_id=None, limit=fetch_limit, source=source),
-                fetch_clinical_history_items(user_id=None, limit=fetch_limit),
-                source=source,
-                limit=fetch_limit,
-            )
-        except Exception:
-            traceback.print_exc()
-            local_items = []
-        return {"items": local_items}
-
-    if supabase is not None:
-        try:
-            recording_query = (
-                supabase.table("recordings")
-                .select("id,user_id,duration,recorded_at,status,notes,created_at")
-                .order("recorded_at", desc=True)
-                .limit(fetch_limit)
-            )
-            if user_id:
-                recording_query = recording_query.eq("user_id", user_id)
-
-            recording_response = recording_query.execute()
-            recordings = recording_response.data or []
-
-            if recordings:
-                recording_ids = [recording.get("id") for recording in recordings if recording.get("id")]
-                biomarker_map: Dict[str, Dict[str, Any]] = {}
-
-                if recording_ids:
-                    biomarker_response = (
-                        supabase.table("biomarkers")
-                        .select(
-                            "id,recording_id,user_id,tremor_score,breathlessness_score,pitch_mean,pitch_variation,speech_rate,pause_count,pause_duration_avg,energy_mean,spectral_centroid_mean,hnr,jitter,shimmer,health_score,health_category,health_trend,confidence,is_anomaly,raw_features,analyzed_at"
-                        )
-                        .in_("recording_id", recording_ids)
-                        .execute()
-                    )
-                    for biomarker in biomarker_response.data or []:
-                        recording_key = biomarker.get("recording_id")
-                        if recording_key:
-                            biomarker_map[recording_key] = biomarker
-
-                for recording in recordings:
-                    biomarker = biomarker_map.get(recording.get("id"), {})
-                    score = float(biomarker.get("health_score") or 0)
-                    category = biomarker.get("health_category") or recording.get("status") or "Unknown"
-                    raw_features = biomarker.get("raw_features") or {}
-                    item_source = raw_features.get("source") or "audio-analysis"
-
-                    if source == "audio" and item_source != "audio-analysis":
-                        continue
-                    if source == "imported" and item_source == "audio-analysis":
-                        continue
-
-                    items.append(
-                        {
-                            "id": recording.get("id"),
-                            "title": recording.get("notes") or category or "Voice Assessment",
-                            "timestamp": biomarker.get("analyzed_at") or recording.get("recorded_at") or recording.get("created_at"),
-                            "health_score": {
-                                "score": score,
-                                "category": category,
-                            },
-                            "recording": recording,
-                            "biomarkers": biomarker,
-                            "source": item_source,
-                        }
-                    )
-        except Exception as error:
-            traceback.print_exc()
-            items = []
-
-    local_items: list[dict[str, Any]] = []
     try:
-        lstm_items = fetch_local_history_items(user_id=user_id, limit=fetch_limit, source=source)
-        clinical_items = fetch_clinical_history_items(user_id=user_id, limit=fetch_limit)
-        local_items = merge_local_history_items(
-            lstm_items,
-            clinical_items,
-            source=source,
-            limit=fetch_limit,
+        recording_query = (
+            supabase.table("recordings")
+            .select("id,user_id,duration,recorded_at,status,notes,created_at")
+            .order("recorded_at", desc=True)
+            .limit(fetch_limit)
         )
+        if user_id:
+            recording_query = recording_query.eq("user_id", user_id)
+
+        recording_response = recording_query.execute()
+        recordings = recording_response.data or []
+
+        if recordings:
+            recording_ids = [recording.get("id") for recording in recordings if recording.get("id")]
+            biomarker_map: Dict[str, Dict[str, Any]] = {}
+
+            if recording_ids:
+                biomarker_response = (
+                    supabase.table("biomarkers")
+                    .select(
+                        "id,recording_id,user_id,tremor_score,breathlessness_score,pitch_mean,pitch_variation,speech_rate,pause_count,pause_duration_avg,energy_mean,spectral_centroid_mean,hnr,jitter,shimmer,health_score,health_category,health_trend,confidence,is_anomaly,raw_features,analyzed_at"
+                    )
+                    .in_("recording_id", recording_ids)
+                    .execute()
+                )
+                for biomarker in biomarker_response.data or []:
+                    recording_key = biomarker.get("recording_id")
+                    if recording_key:
+                        biomarker_map[recording_key] = biomarker
+
+            for recording in recordings:
+                biomarker = biomarker_map.get(recording.get("id"), {})
+                score = float(biomarker.get("health_score") or 0)
+                category = biomarker.get("health_category") or recording.get("status") or "Unknown"
+                raw_features = biomarker.get("raw_features") or {}
+                item_source = raw_features.get("source") or "audio-analysis"
+
+                if source == "audio" and item_source != "audio-analysis":
+                    continue
+                if source == "imported" and item_source == "audio-analysis":
+                    continue
+
+                items.append(
+                    {
+                        "id": recording.get("id"),
+                        "title": recording.get("notes") or category or "Voice Assessment",
+                        "timestamp": biomarker.get("analyzed_at") or recording.get("recorded_at") or recording.get("created_at"),
+                        "health_score": {
+                            "score": score,
+                            "category": category,
+                        },
+                        "recording": recording,
+                        "biomarkers": biomarker,
+                        "source": item_source,
+                    }
+                )
     except Exception as error:
         traceback.print_exc()
-        local_items = []
-
-    if not items:
-        items = local_items
-    elif (
-        source == "all"
-        and user_id
-        and is_import_active(user_id)
-        and len(local_items) > len(items)
-    ):
-        # Supabase may be offline or missing imported rows — prefer fuller local timeline.
-        items = local_items
+        items = []
 
     return {"items": items}
 
@@ -1147,9 +1067,9 @@ async def import_status(
         return {"active": False, "filename": None, "row_count": 0}
 
     if user_id:
-        return get_import_status(user_id)
+        return get_import_status(supabase, user_id)
 
-    return get_import_status(None)
+    return get_import_status(supabase, None)
 
 
 @router.get("/alerts")

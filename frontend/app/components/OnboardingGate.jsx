@@ -16,7 +16,6 @@ export default function OnboardingGate({ children }) {
   const [profileReady, setProfileReady] = useState(false);
   const [allowed, setAllowed] = useState(PUBLIC_PATHS.has(pathname));
 
-  // Pull cloud profile after login so age/sex/condition work on any device.
   useEffect(() => {
     if (loading) return;
 
@@ -46,29 +45,20 @@ export default function OnboardingGate({ children }) {
   useEffect(() => {
     if (loading || !profileReady) return;
 
-    if (requireAuth && !user && pathname !== '/login') {
-      router.replace('/login');
+    if (pathname === '/login') {
+      router.replace('/onboarding');
       setAllowed(false);
       return;
     }
 
-    if (pathname === '/login') {
-      if (user && isOnboardingComplete()) {
-        router.replace('/');
-        setAllowed(false);
-        return;
-      }
-      if (user && !isOnboardingComplete()) {
-        router.replace('/onboarding');
-        setAllowed(false);
-        return;
-      }
-      setAllowed(true);
+    if (requireAuth && !user && pathname !== '/onboarding') {
+      router.replace('/onboarding');
+      setAllowed(false);
       return;
     }
 
     if (pathname === '/onboarding') {
-      if (isOnboardingComplete()) {
+      if (user && isOnboardingComplete()) {
         router.replace('/');
         setAllowed(false);
         return;

@@ -10,8 +10,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from services.lstm_history import (
     IMPORT_SOURCE,
     RECORDING_SOURCE,
-    _load_local_store,
-    _local_key,
     is_complete_lstm_row,
 )
 
@@ -155,16 +153,9 @@ def fetch_export_history_entries(
   Example: 30-day import + 6 recordings → last 30 export rows = 24 import + 6 recorded.
     """
     if supabase is not None:
-        supabase_entries = _fetch_supabase_export_entries(supabase, user_id=user_id, limit=limit)
-        if supabase_entries:
-            return supabase_entries
+        return _fetch_supabase_export_entries(supabase, user_id=user_id, limit=limit)
 
-    store = _load_local_store()
-    bucket = store.get(_local_key(user_id)) or {"recorded": [], "imported": []}
-    combined = list(bucket.get("imported") or []) + list(bucket.get("recorded") or [])
-    valid = [dict(row) for row in combined if is_complete_lstm_row(row)]
-    tail = valid[-limit:]
-    return [{"lstm_row": row, "extras": {}} for row in tail]
+    return []
 
 
 def build_export_rows(

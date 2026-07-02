@@ -14,7 +14,7 @@ import {
   xAxisDateProps,
   yAxisDefaultProps,
 } from '../../lib/chartTheme';
-import { formatFullDate } from '../../lib/insightsData';
+import { formatFullDate, buildInsightsTimeline } from '../../lib/insightsData';
 
 const chartConfig = {
   score: { label: 'Stability', color: CHART_COLORS.primary },
@@ -42,13 +42,12 @@ function StabilityTooltipContent({ active, payload }) {
 }
 
 export function buildVoiceStabilityChartData(historyItems) {
-  return [...(historyItems || [])]
-    .reverse()
-    .map((item) => ({
-      date: item.timestamp,
-      score: Number(item.health_score?.score ?? 0),
-      category: item.health_score?.category || '',
-      title: item.title || '',
+  return buildInsightsTimeline(historyItems || [], '90d')
+    .map((row) => ({
+      date: row.date,
+      score: Number(row.health_score ?? 0),
+      category: row.category || '',
+      title: row.title || '',
     }))
     .filter((row) => Number.isFinite(row.score) && row.date);
 }

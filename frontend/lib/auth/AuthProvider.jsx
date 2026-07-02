@@ -17,8 +17,6 @@ const AuthContext = createContext({
   loading: true,
   requireAuth: REQUIRE_AUTH,
   supabaseEnabled: false,
-  signIn: async () => ({ error: { message: 'Supabase not configured' } }),
-  signUp: async () => ({ error: { message: 'Supabase not configured' } }),
   signInWithGoogle: async () => ({ error: { message: 'Supabase not configured' } }),
   signOut: async () => {},
 });
@@ -54,24 +52,6 @@ export function AuthProvider({ children }) {
     };
   }, [supabase]);
 
-  const signIn = useCallback(
-    async (email, password) => {
-      if (!supabase) return { error: { message: 'Supabase is not configured' } };
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      return { error };
-    },
-    [supabase],
-  );
-
-  const signUp = useCallback(
-    async (email, password) => {
-      if (!supabase) return { error: { message: 'Supabase is not configured' } };
-      const { error } = await supabase.auth.signUp({ email, password });
-      return { error };
-    },
-    [supabase],
-  );
-
   const signInWithGoogle = useCallback(async () => {
     if (!supabase) return { error: { message: 'Supabase is not configured' } };
     const { error } = await supabase.auth.signInWithOAuth({
@@ -97,12 +77,10 @@ export function AuthProvider({ children }) {
       loading,
       requireAuth: REQUIRE_AUTH,
       supabaseEnabled: isSupabaseConfigured(),
-      signIn,
-      signUp,
       signInWithGoogle,
       signOut,
     }),
-    [session, loading, signIn, signUp, signInWithGoogle, signOut],
+    [session, loading, signInWithGoogle, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

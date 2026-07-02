@@ -1,5 +1,9 @@
 /** Supported monitoring conditions — one per patient profile. */
 
+/** Shown in onboarding / settings (Depression disabled for now). */
+export const ENABLED_CONDITION_IDS = ['parkinsons', 'asthma'];
+
+/** All condition ids including legacy/disabled entries. */
 export const CONDITION_IDS = ['parkinsons', 'depression', 'asthma'];
 
 export const CONDITIONS = {
@@ -62,7 +66,7 @@ export const CONDITIONS = {
     apiValue: 'Asthma',
     icon: 'pulmonology',
     accent: 'from-emerald-600 to-teal-500',
-    summary: 'Watch breathlessness, wheeze signatures, pauses, and speech effort.',
+    summary: 'Watch breathlessness, cough signatures, pauses, and speech effort.',
     recordingSeconds: 20,
     sustainSeconds: 5,
     dashboardSubtitle: 'Respiratory voice markers from your daily breathing check-in.',
@@ -72,7 +76,6 @@ export const CONDITIONS = {
       { id: 'speech', label: 'Speech Rate', icon: 'speed', field: 'speech_rate', invert: false },
     ],
     resultBars: [
-      { label: 'Wheeze', key: 'wheeze_detected', max: 1 },
       { label: 'Cough', key: 'cough_detected', max: 1 },
       { label: 'Breathlessness', key: 'breathlessness_score', max: 100 },
       { label: 'Pause Patterns', key: 'pause_score', max: 1 },
@@ -86,7 +89,7 @@ export function getCondition(id) {
 }
 
 export function getConditionList() {
-  return CONDITION_IDS.map((id) => CONDITIONS[id]);
+  return ENABLED_CONDITION_IDS.map((id) => CONDITIONS[id]);
 }
 
 export function apiValueFromId(id) {

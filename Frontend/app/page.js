@@ -701,24 +701,19 @@ export default function DashboardPage() {
                       const score = Number(item.health_score?.score || 0);
                       const tone = historyTone(score);
                       return (
-                        <div key={item.id} className="bg-white border border-gray-100 p-5 rounded-2xl flex items-center justify-between group hover:shadow-md hover:border-gray-200 transition-all cursor-pointer hover:-translate-y-[1px]">
+                        <div key={item.id} className="bg-white border border-gray-100 p-5 rounded-2xl flex items-center justify-between hover:shadow-md hover:border-gray-200 transition-all">
                           <div className="flex items-center gap-5">
-                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform ${tone.badge}`}>
+                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${tone.badge}`}>
                               <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>{tone.icon}</span>
                             </div>
                             <div>
-                              <div className="font-bold text-slate-900 text-[15px] group-hover:text-primary transition-colors">{item.title || 'Voice Assessment'}</div>
+                              <div className="font-bold text-slate-900 text-[15px]">{item.title || 'Voice Assessment'}</div>
                               <div className="text-sm font-medium text-slate-400 mt-0.5">{formatHistoryTimestamp(item.timestamp)}</div>
                             </div>
                           </div>
-                          <div className="flex items-center gap-6">
-                            <div className="text-right hidden sm:block">
-                              <div className="text-[15px] font-bold text-slate-900">{score.toFixed(0)}<span className="text-slate-400 text-xs text-normal">/100</span></div>
-                              <div className="text-[10px] text-secondary font-black uppercase tracking-widest mt-0.5">{item.health_score?.category || tone.label}</div>
-                            </div>
-                            <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center group-hover:bg-primary/5 transition-colors">
-                               <span className="material-symbols-outlined text-gray-400 group-hover:text-primary transition-colors text-xl">chevron_right</span>
-                            </div>
+                          <div className="text-right">
+                            <div className="text-[15px] font-bold text-slate-900">{score.toFixed(0)}<span className="text-slate-400 text-xs text-normal">/100</span></div>
+                            <div className="text-[10px] text-secondary font-black uppercase tracking-widest mt-0.5">{item.health_score?.category || tone.label}</div>
                           </div>
                         </div>
                       );

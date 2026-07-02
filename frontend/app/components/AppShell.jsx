@@ -12,10 +12,10 @@ import {
   LogOut,
   Menu,
   Plus,
-  Activity,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
+import BrandLogo, { SidebarBrandLockup } from './BrandLogo';
 import { cn } from '@/lib/utils';
 import { getProfile, clearProfile } from '@/lib/profile';
 import { clearReportImport } from '@/lib/reportImport';
@@ -76,19 +76,11 @@ function SidebarBrand({ collapsed, onToggle, showToggle = true }) {
   return (
     <div
       className={cn(
-        'flex items-center border-b border-slate-200',
-        collapsed ? 'flex-col gap-2 px-2 py-3' : 'gap-3 px-4 py-5'
+        'flex h-14 shrink-0 items-center border-b border-slate-200 bg-white shadow-sm',
+        collapsed ? 'justify-center gap-1 px-2' : 'gap-2 px-3',
       )}
     >
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-white shadow-md">
-        <Activity className="h-5 w-5" />
-      </div>
-      {!collapsed && (
-        <div className="min-w-0 flex-1">
-          <p className="font-headline text-lg font-extrabold tracking-tight text-primary truncate">Vocalis</p>
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Clinical Grade</p>
-        </div>
-      )}
+      <SidebarBrandLockup collapsed={collapsed} href="/" priority className={collapsed ? '' : 'min-w-0 flex-1'} />
       {showToggle && (
         <Button
           type="button"
@@ -241,6 +233,8 @@ export default function AppShell({ children, title, headerActions }) {
             {collapsed ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
           </Button>
 
+          <BrandLogo href="/" variant="iconBordered" className="md:hidden" imageClassName="h-8 w-8" />
+
           <h1 className="flex-1 truncate font-headline text-lg font-bold text-primary">{pageTitle}</h1>
 
           {headerActions ? <div className="flex items-center gap-2">{headerActions}</div> : null}
@@ -274,14 +268,11 @@ export default function AppShell({ children, title, headerActions }) {
                 <Settings className="h-4 w-4" />
                 Settings
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => router.push('/login')}>
-                <LogOut className="h-4 w-4" />
-                Account
-              </DropdownMenuItem>
+              
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleExit} className="text-error focus:text-error">
                 <LogOut className="h-4 w-4" />
-                Exit
+                Logout
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

@@ -1,18 +1,8 @@
-"""Local persistence for clinical voice biomarkers (insights / reference — not LSTM/XGBoost inputs)."""
+"""Clinical insight helpers for voice biomarker payloads (insights / reference — not LSTM/XGBoost inputs)."""
 
 from __future__ import annotations
 
-import json
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-from json_safe import json_safe
-
-RECORDING_SOURCE = "audio-analysis"
-IMPORT_SOURCE = "imported-medical-record"
-
-CLINICAL_SESSIONS_PATH = Path(__file__).resolve().parents[1] / ".data" / "clinical_sessions.json"
+from typing import Any, Dict, Optional
 
 CLINICAL_INSIGHT_DEFINITIONS = (
     {
@@ -41,29 +31,6 @@ CLINICAL_INSIGHT_DEFINITIONS = (
         "description": "Identifying abnormal gaps in verbal articulation.",
     },
 )
-
-
-def _local_key(user_id: Optional[str]) -> str:
-    return user_id or "default"
-
-
-def _load_store() -> Dict[str, List[Dict[str, Any]]]:
-    if not CLINICAL_SESSIONS_PATH.exists():
-        return {}
-    try:
-        with open(CLINICAL_SESSIONS_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            return {}
-        return {str(k): list(v) if isinstance(v, list) else [] for k, v in data.items()}
-    except Exception:
-        return {}
-
-
-def _save_store(data: Dict[str, List[Dict[str, Any]]]) -> None:
-    CLINICAL_SESSIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(CLINICAL_SESSIONS_PATH, "w", encoding="utf-8") as f:
-        json.dump(json_safe(data), f, indent=2)
 
 
 def build_clinical_insights(
@@ -130,111 +97,3 @@ def build_clinical_insights(
         "insight_source": report.get("model_source", "acoustic_analysis"),
         "used_by_ml_models": False,
     }
-
-
-def save_clinical_session(
-    *,
-    user_id: Optional[str],
-    recording_id: str,
-    disease: str,
-    duration: float,
-    analyzed_at_iso: str,
-    health_score: float,
-    health_category: str,
-    report: Dict[str, Any],
-    signals: Dict[str, Any],
-    scores: Dict[str, Any],
-    clinical_insights: Dict[str, Any],
-) -> None:
-    """Persist a voice recording's clinical biomarkers locally (always, even if Supabase is offline)."""
-    biomarkers = report.get("biomarkers") or {}
-    session = {
-        "id": recording_id,
-        "recording_id": recording_id,
-        "title": f"Voice assessment — {disease}",
-        "timestamp": analyzed_at_iso,
-        "health_score": {"score": float(health_score), "category": health_category},
-        "recording": {
-            "id": recording_id,
-            "duration": float(duration),
-            "status": "analyzed",
-            "recorded_at": analyzed_at_iso,
-        },
-        "biomarkers": {
-            "tremor_score": float(scores.get("tremor_score", 0)),
-            "breathlessness_score": float(scores.get("breathlessness_score", 0)),
-            "pitch_mean": float(scores.get("pitch_mean", 0)),
-            "pitch_variation": float(scores.get("pitch_variation", 0)),
-            "speech_rate": float(scores.get("speech_rate", 0)),
-            "pause_count": int(scores.get("pause_count", 0)),
-            "pause_duration_avg": float(scores.get("pause_duration_avg", 0)),
-            "hnr": float(scores.get("hnr", 0)),
-            "jitter": float(scores.get("jitter", 0)),
-            "shimmer": float(scores.get("shimmer", 0)),
-            "health_score": float(health_score),
-            "health_category": health_category,
-            "confidence": float(report.get("confidence", 0)),
-            "raw_features": {
-                "source": RECORDING_SOURCE,
-                "signals": signals,
-                "biomarkers": biomarkers,
-                "clinical_insights": clinical_insights,
-                "prediction": report.get("prediction"),
-                "severity": report.get("severity"),
-                "stage": report.get("stage"),
-                "motor_updrs": report.get("motor_updrs"),
-                "lstm_row": report.get("lstm_row"),
-                "model_source": report.get("model_source"),
-            },
-            "analyzed_at": analyzed_at_iso,
-        },
-        "source": RECORDING_SOURCE,
-        "saved_at": datetime.utcnow().isoformat(),
-    }
-
-    store = _load_store()
-    key = _local_key(user_id)
-    sessions = store.get(key) or []
-    sessions = [s for s in sessions if s.get("recording_id") != recording_id]
-    sessions.append(session)
-    sessions.sort(key=lambda row: row.get("timestamp") or "", reverse=True)
-    store[key] = sessions[:200]
-    _save_store(store)
-
-
-def fetch_clinical_history_items(
-    user_id: Optional[str] = None,
-    limit: int = 60,
-) -> List[Dict[str, Any]]:
-    store = _load_store()
-    sessions = list(store.get(_local_key(user_id)) or [])
-    sessions.sort(key=lambda row: row.get("timestamp") or "", reverse=True)
-    return sessions[: max(1, min(limit, 100))]
-
-
-def merge_local_history_items(
-    lstm_items: List[Dict[str, Any]],
-    clinical_items: List[Dict[str, Any]],
-    *,
-    source: str = "all",
-    limit: int = 60,
-) -> List[Dict[str, Any]]:
-    """Combine imported LSTM timeline + recorded clinical sessions without duplicates."""
-    if source == "imported":
-        merged = [item for item in lstm_items if item.get("source") == IMPORT_SOURCE]
-    elif source == "audio":
-        merged = list(clinical_items)
-        if not merged:
-            merged = [item for item in lstm_items if item.get("source") == RECORDING_SOURCE]
-    else:
-        imported = [item for item in lstm_items if item.get("source") == IMPORT_SOURCE]
-        recorded_ids = {item.get("recording_id") or item.get("id") for item in clinical_items}
-        lstm_recorded_fallback = [
-            item
-            for item in lstm_items
-            if item.get("source") == RECORDING_SOURCE and (item.get("id") not in recorded_ids)
-        ]
-        merged = imported + clinical_items + lstm_recorded_fallback
-
-    merged.sort(key=lambda row: row.get("timestamp") or "", reverse=True)
-    return merged[: max(1, min(limit, 100))]

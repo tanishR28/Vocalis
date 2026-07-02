@@ -113,3 +113,7 @@ export function hasParkinsonDemographics(profile) {
   if (!profile) return false;
   return Number.isFinite(profile.age) && (profile.sex === 0 || profile.sex === 1);
 }
+
+export function hasPatientDemographics(profile) {
+  return hasParkinsonDemographics(profile);
+}

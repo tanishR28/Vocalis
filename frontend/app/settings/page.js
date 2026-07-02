@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { getCondition, getConditionList } from '@/lib/conditions';
+import { getCondition, getConditionList, ENABLED_CONDITION_IDS } from '@/lib/conditions';
 import { getProfile, updateProfile, PROFILE_CHANGED } from '@/lib/profile';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { syncProfileToSupabase } from '@/lib/supabase/profileSync';
@@ -24,7 +24,7 @@ export default function SettingsPage() {
       const profile = getProfile();
       if (!profile) return;
       setPatientName(profile.patientName || '');
-      setConditionId(profile.conditionId || '');
+      setConditionId(profile.conditionId === 'depression' ? '' : (profile.conditionId || ''));
       if (profile.age) setAge(String(profile.age));
       else setAge('');
       if (profile.sex === 0 || profile.sex === 1) setSex(String(profile.sex));
@@ -39,20 +39,18 @@ export default function SettingsPage() {
   const selected = getCondition(conditionId);
 
   async function handleSave() {
-    if (!conditionId) {
-      setError('Please select a monitoring condition.');
+    if (!ENABLED_CONDITION_IDS.includes(conditionId)) {
+      setError('Please select Parkinson\'s or Asthma. Depression monitoring is not available yet.');
       return;
     }
-    if (conditionId === 'parkinsons') {
-      const ageNum = Number(age);
-      if (!Number.isFinite(ageNum) || ageNum < 18 || ageNum > 100) {
-        setError('Valid age (18–100) is required for Parkinson\'s UPDRS analysis.');
-        return;
-      }
-      if (sex !== '0' && sex !== '1') {
-        setError('Sex is required for Parkinson\'s UPDRS analysis.');
-        return;
-      }
+    const ageNum = Number(age);
+    if (!Number.isFinite(ageNum) || ageNum < 18 || ageNum > 100) {
+      setError('Valid age (18–100) is required.');
+      return;
+    }
+    if (sex !== '0' && sex !== '1') {
+      setError('Sex is required.');
+      return;
     }
     setError('');
     const profile = updateProfile({
@@ -98,7 +96,7 @@ export default function SettingsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label htmlFor="settings-age" className="block text-sm font-bold text-slate-700 mb-2">
-              Age {conditionId === 'parkinsons' ? '(required for UPDRS)' : '(optional)'}
+              Age <span className="text-red-500">*</span>
             </label>
             <input
               id="settings-age"
@@ -113,7 +111,7 @@ export default function SettingsPage() {
           </div>
           <div>
             <label htmlFor="settings-sex" className="block text-sm font-bold text-slate-700 mb-2">
-              Sex {conditionId === 'parkinsons' ? '(required)' : '(optional)'}
+              Sex <span className="text-red-500">*</span>
             </label>
             <select
               id="settings-sex"

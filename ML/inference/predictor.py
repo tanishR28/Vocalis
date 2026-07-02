@@ -100,11 +100,11 @@ class XGBoostPredictor:
         }
 
         if condition_api == "Asthma":
-            cough = bool(feature_values.get("cough_detected", False))
-            wheeze = bool(feature_values.get("wheeze_detected", False))
+            cough = bool(feature_values.get("cough_detected", False)) or bool(bios.get("cough_detected", False))
             result["cough_detected"] = cough
-            result["wheeze_detected"] = wheeze
-            if cough or wheeze:
+            result["wheeze_detected"] = False
+            if cough:
+                result["prediction"] = "COUGH DETECTED"
                 result["signature_detected"] = True
 
         return result
@@ -149,11 +149,11 @@ class XGBoostPredictor:
         }
 
         if condition_api == "Asthma":
-            cough = bool(bios.get("cough_detected", False))
-            wheeze = bool(data["signatures"].get("wheeze", False))
+            cough = bool(data["signatures"].get("cough", False)) or bool(bios.get("cough_detected", False))
             result["cough_detected"] = cough
-            result["wheeze_detected"] = wheeze
-            if cough or wheeze:
+            result["wheeze_detected"] = False
+            if cough:
+                result["prediction"] = "COUGH DETECTED"
                 result["signature_detected"] = True
 
         return result

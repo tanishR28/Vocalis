@@ -26,6 +26,7 @@ export function useMedicalReportImport({ onImportSuccess, onImportRemoved } = {}
   const [demographicsPreview, setDemographicsPreview] = useState(null);
   const [showDemographicsModal, setShowDemographicsModal] = useState(false);
   const reportFileInputRef = useRef(null);
+  const hydratingRef = useRef(false);
 
   async function fetchImportStatus() {
     if (!authReady) return { active: false };
@@ -39,48 +40,56 @@ export function useMedicalReportImport({ onImportSuccess, onImportRemoved } = {}
   }
 
   async function hydrateFromStorage() {
-    if (!authReady) return;
+    if (!authReady || hydratingRef.current) return;
 
-    const status = await fetchImportStatus();
-    if (!status?.active) {
-      if (userId) clearReportImport(userId);
-      else clearReportImport();
+    hydratingRef.current = true;
+    try {
+      const status = await fetchImportStatus();
+      if (!status?.active) {
+        const storedReport = getStoredReportImport(userId);
+        if (storedReport) {
+          if (userId) clearReportImport(userId);
+          else clearReportImport();
+        }
+        setReportImportResult(null);
+        setUploadedReportFileName('');
+        setShowReportUploadForm(false);
+        return;
+      }
+
+      const storedReport = getStoredReportImport(userId);
+      if (storedReport && storedReport.userId && userId && storedReport.userId !== userId) {
+        clearReportImport(userId);
+        setReportImportResult(null);
+        setUploadedReportFileName('');
+        setShowReportUploadForm(false);
+        return;
+      }
+
+      if (storedReport) {
+        setReportImportResult(toReportImportResult(storedReport));
+        setUploadedReportFileName(storedReport.filename || status.filename || 'Imported report');
+        setShowReportUploadForm(false);
+        return;
+      }
+
+      if (status.active) {
+        setReportImportResult({
+          filename: status.filename || 'Imported report',
+          imported_rows: status.row_count ?? 0,
+          importedAt: null,
+        });
+        setUploadedReportFileName(status.filename || 'Imported report');
+        setShowReportUploadForm(false);
+        return;
+      }
+
       setReportImportResult(null);
       setUploadedReportFileName('');
       setShowReportUploadForm(false);
-      return;
+    } finally {
+      hydratingRef.current = false;
     }
-
-    const storedReport = getStoredReportImport(userId);
-    if (storedReport && storedReport.userId && userId && storedReport.userId !== userId) {
-      clearReportImport(userId);
-      setReportImportResult(null);
-      setUploadedReportFileName('');
-      setShowReportUploadForm(false);
-      return;
-    }
-
-    if (storedReport) {
-      setReportImportResult(toReportImportResult(storedReport));
-      setUploadedReportFileName(storedReport.filename || status.filename || 'Imported report');
-      setShowReportUploadForm(false);
-      return;
-    }
-
-    if (status.active) {
-      setReportImportResult({
-        filename: status.filename || 'Imported report',
-        imported_rows: status.row_count ?? 0,
-        importedAt: null,
-      });
-      setUploadedReportFileName(status.filename || 'Imported report');
-      setShowReportUploadForm(false);
-      return;
-    }
-
-    setReportImportResult(null);
-    setUploadedReportFileName('');
-    setShowReportUploadForm(false);
   }
 
   useEffect(() => {
