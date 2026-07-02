@@ -9,12 +9,13 @@ const TITLES = {
   '/history': 'History',
   '/insights': 'Insights',
   '/settings': 'Settings',
+  '/login': 'Sign in',
 };
 
 export default function AppLayout({ children }) {
   const pathname = usePathname();
 
-  if (pathname === '/onboarding') {
+  if (pathname === '/onboarding' || pathname === '/login') {
     return children;
   }
 

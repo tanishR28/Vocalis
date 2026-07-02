@@ -3,8 +3,8 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import MedicalReportImport, { HistoryExportPanel } from '../components/MedicalReportImport';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { apiFetch, withUserIdParams } from '../../lib/api';
+import { useAuthScopeId } from '../../lib/useAuthScope';
 
 function formatHistoryTimestamp(timestamp) {
   if (!timestamp) return 'Just now';
@@ -33,6 +33,7 @@ function formatValue(value, digits = 2) {
 }
 
 function HistoryPageContent() {
+  const { userId, authReady } = useAuthScopeId();
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -42,7 +43,7 @@ function HistoryPageContent() {
 
   async function reloadAudioHistory() {
     try {
-      const response = await fetch(`${API_URL}/api/history?limit=50&source=audio`);
+      const response = await apiFetch(`/api/history?${withUserIdParams({ limit: 50, source: 'audio' }).toString()}`);
       if (!response.ok) return;
       const data = await response.json();
       setItems(Array.isArray(data.items) ? data.items : []);
@@ -56,8 +57,9 @@ function HistoryPageContent() {
   }
 
   useEffect(() => {
+    if (!authReady) return;
     reloadAudioHistory();
-  }, []);
+  }, [authReady, userId]);
 
   useEffect(() => {
     if (!items.length) return;

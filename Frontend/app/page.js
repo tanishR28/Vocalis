@@ -14,8 +14,8 @@ import MedicalReportImport from './components/MedicalReportImport';
 import VoiceStabilityTrendChart from './components/VoiceStabilityTrendChart';
 import MiniHealthSparkline from './components/MiniHealthSparkline';
 import { REPORT_IMPORT_CHANGED } from '../lib/reportImport';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { apiFetch, getApiUserId, withUserIdParams } from '../lib/api';
+import { useAuthScopeId } from '../lib/useAuthScope';
 
 function formatHistoryTimestamp(timestamp) {
   if (!timestamp) return 'Just now';
@@ -87,6 +87,7 @@ function getSessionSnapshot(historyItem, analysisData) {
 }
 
 export default function DashboardPage() {
+  const { userId, authReady } = useAuthScopeId();
   const [mounted, setMounted] = useState(false);
   const [analysisData, setAnalysisData] = useState(null);
   const [historyItems, setHistoryItems] = useState([]);
@@ -117,7 +118,7 @@ export default function DashboardPage() {
 
   async function loadDashboardHistory() {
     try {
-      const response = await fetch(`${API_URL}/api/history?limit=60`);
+      const response = await apiFetch(`/api/history?${withUserIdParams({ limit: 60 }).toString()}`);
       if (!response.ok) return [];
       const data = await response.json();
       const items = Array.isArray(data.items) ? data.items : [];
@@ -131,7 +132,7 @@ export default function DashboardPage() {
 
   async function handleReportImportSuccess() {
     try {
-      const statusResponse = await fetch(`${API_URL}/forecast/parkinsons/status`);
+      const statusResponse = await apiFetch(`/forecast/parkinsons/status?${withUserIdParams().toString()}`);
       if (statusResponse.ok) {
         setForecastStatus(await statusResponse.json());
       }
@@ -145,12 +146,12 @@ export default function DashboardPage() {
     setForecastResult(null);
     setForecastError('');
     try {
-      const statusResponse = await fetch(`${API_URL}/forecast/parkinsons/status`);
+      const statusResponse = await apiFetch(`/forecast/parkinsons/status?${withUserIdParams().toString()}`);
       if (statusResponse.ok) {
         setForecastStatus(await statusResponse.json());
       }
 
-      const response = await fetch(`${API_URL}/api/history?limit=60&source=audio`);
+      const response = await apiFetch(`/api/history?${withUserIdParams({ limit: 60, source: 'audio' }).toString()}`);
       if (response.ok) {
         const historyData = await response.json();
         setHistoryItems(Array.isArray(historyData.items) ? historyData.items : []);
@@ -164,6 +165,8 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
+    if (!authReady) return;
+
     let active = true;
 
     async function loadHistory() {
@@ -182,16 +185,16 @@ export default function DashboardPage() {
       active = false;
       window.removeEventListener(REPORT_IMPORT_CHANGED, onImportChanged);
     };
-  }, []);
+  }, [authReady, userId]);
 
   useEffect(() => {
-    if (!mounted || profile?.conditionId !== 'parkinsons') return;
+    if (!mounted || profile?.conditionId !== 'parkinsons' || !authReady) return;
 
     let active = true;
 
     async function loadForecastStatus() {
       try {
-        const response = await fetch(`${API_URL}/forecast/parkinsons/status`);
+        const response = await apiFetch(`/forecast/parkinsons/status?${withUserIdParams().toString()}`);
         if (!response.ok) return;
         const data = await response.json();
         if (active) setForecastStatus(data);
@@ -204,16 +207,16 @@ export default function DashboardPage() {
     return () => {
       active = false;
     };
-  }, [mounted, profile?.conditionId, historyItems.length]);
+  }, [mounted, profile?.conditionId, historyItems.length, authReady, userId]);
 
   async function handleForecastProgression() {
     setIsForecastLoading(true);
     setForecastError('');
     try {
-      const response = await fetch(`${API_URL}/forecast/parkinsons`, {
+      const response = await apiFetch('/forecast/parkinsons', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ user_id: getApiUserId() }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -238,12 +241,17 @@ export default function DashboardPage() {
   const hasAssessmentData = Boolean(
     sessionSnapshot && Number.isFinite(sessionSnapshot.healthScore),
   );
-  const trendLimit = trendRange === 'week' ? 7 : 30;
-  const trendItems = historyItems.slice(0, trendLimit);
-  const trendScores = [...trendItems]
-    .reverse()
-    .map((item) => Number(item.health_score?.score))
-    .filter((value) => Number.isFinite(value));
+  const dashboardTimeline = useMemo(
+    () => buildInsightsTimeline(historyItems, trendRange === 'week' ? '7d' : '30d'),
+    [historyItems, trendRange],
+  );
+  const trendScores = useMemo(
+    () => dashboardTimeline
+      .map((row) => Number(row.health_score))
+      .filter((value) => Number.isFinite(value)),
+    [dashboardTimeline],
+  );
+  const latestTimeline = latestTimelineRow(dashboardTimeline);
   const overallScore = hasAssessmentData ? sessionSnapshot.healthScore : null;
   const trendInfo = analysisData?.trends || null;
   const computedTrend = computeTrendFromScores(trendScores);
@@ -275,11 +283,17 @@ export default function DashboardPage() {
   const minSessionsForTrends = 3;
   const hasTrendData = trendScores.length >= minSessionsForTrends;
   const sessionCounts = countSessionsBySource(historyItems);
-  const dashboardTimeline = useMemo(
-    () => buildInsightsTimeline(historyItems, trendRange === 'week' ? '7d' : '30d'),
-    [historyItems, trendRange],
+  const trendChartItems = useMemo(
+    () => dashboardTimeline.map((row) => ({
+      timestamp: row.date,
+      title: row.title,
+      health_score: {
+        score: row.health_score,
+        category: row.category,
+      },
+    })),
+    [dashboardTimeline],
   );
-  const latestTimeline = latestTimelineRow(dashboardTimeline);
   const sparklineData = useMemo(
     () => buildInsightsTimeline(historyItems, '7d').slice(-7),
     [historyItems],
@@ -550,8 +564,8 @@ export default function DashboardPage() {
                 </div>
               </div>
               <div className="flex-1 min-h-[260px] relative z-0 mt-4 sm:mt-0">
-                {trendItems.length > 0 ? (
-                  <VoiceStabilityTrendChart items={trendItems} />
+                {trendChartItems.length > 0 ? (
+                  <VoiceStabilityTrendChart items={trendChartItems} />
                 ) : (
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-6">
                     <span className="material-symbols-outlined text-4xl text-slate-300 mb-3">show_chart</span>

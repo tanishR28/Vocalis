@@ -8,21 +8,24 @@ import {
   sameMonth,
   toDayKey,
 } from '../../lib/sessionCalendar';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { apiFetch, withUserIdParams } from '../../lib/api';
+import { useAuthScopeId } from '../../lib/useAuthScope';
 
 export default function NavbarSessionCalendar() {
+  const { userId, authReady } = useAuthScopeId();
   const [open, setOpen] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [historyItems, setHistoryItems] = useState([]);
   const panelRef = useRef(null);
 
   useEffect(() => {
+    if (!authReady) return;
+
     let active = true;
 
     async function loadHistory() {
       try {
-        const response = await fetch(`${API_URL}/api/history?limit=60`);
+        const response = await apiFetch(`/api/history?${withUserIdParams({ limit: 60 }).toString()}`);
         if (!response.ok) return;
         const data = await response.json();
         if (active) {
@@ -37,7 +40,7 @@ export default function NavbarSessionCalendar() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [authReady, userId]);
 
   useEffect(() => {
     if (!open) return undefined;

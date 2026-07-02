@@ -95,11 +95,13 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 
 ### 4. Database
 
-Run `supabase_schema.sql` in the Supabase SQL editor, then:
+Run [`supabase_schema.sql`](supabase_schema.sql) in the Supabase SQL editor, then:
 
 ```sql
 NOTIFY pgrst, 'reload schema';
 ```
+
+See **[docs/SUPABASE.md](docs/SUPABASE.md)** for how Vocalis uses Supabase (tables, auth, env vars, and local fallback).
 
 ## Project structure
 
@@ -112,7 +114,7 @@ Vocalis/
 │   │   ├── history/page.js      # Assessment timeline
 │   │   ├── insights/page.js     # Biomarker charts
 │   │   └── dashboard/page.js    # Redirects to /
-│   └── lib/supabase/            # Auth client helpers (for future use)
+│   └── lib/supabase/            # Auth client + profile sync
 ├── backend/
 │   ├── main.py                  # FastAPI entry point
 │   ├── config.py                # Paths + CORS settings

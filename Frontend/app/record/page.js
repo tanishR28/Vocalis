@@ -11,8 +11,7 @@ import {
   getSeverityPresentation,
 } from '../../lib/diagnosticStyling';
 import RecordingInstructions from '../components/RecordingInstructions';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { apiFetch, getApiUserId } from '../../lib/api';
 const DEFAULT_RECORDING_SECONDS = 15;
 
 const PARKINSONS_MANUAL_SAMPLE = {
@@ -220,8 +219,10 @@ export default function RecordPage() {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      const userId = getApiUserId();
+      if (userId) formData.append('user_id', userId);
 
-      const response = await fetch(`${API_URL}/api/extract-medical-records`, {
+      const response = await apiFetch('/api/extract-medical-records', {
         method: 'POST',
         body: formData,
       });
@@ -357,8 +358,10 @@ export default function RecordPage() {
       if (profile?.age != null) formData.append('age', String(profile.age));
       if (profile?.sex === 0 || profile?.sex === 1) formData.append('sex', String(profile.sex));
       if (profile?.onboardedAt) formData.append('onboarded_at', profile.onboardedAt);
+      const userId = getApiUserId();
+      if (userId) formData.append('user_id', userId);
 
-      const response = await fetch(`${API_URL}/api/analyze`, {
+      const response = await apiFetch('/api/analyze', {
         method: 'POST',
         body: formData,
       });
@@ -414,8 +417,10 @@ export default function RecordPage() {
       if (profile?.age != null) payload.age = profile.age;
       if (profile?.sex === 0 || profile?.sex === 1) payload.sex = profile.sex;
       if (profile?.onboardedAt) payload.onboarded_at = profile.onboardedAt;
+      const userId = getApiUserId();
+      if (userId) payload.user_id = userId;
 
-      const response = await fetch(`${API_URL}/api/analyze-manual`, {
+      const response = await apiFetch('/api/analyze-manual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

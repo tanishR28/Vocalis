@@ -92,3 +92,16 @@ export function getConditionList() {
 export function apiValueFromId(id) {
   return CONDITIONS[id]?.apiValue || null;
 }
+
+/** Map stored `profiles.condition` value back to app condition id. */
+export function conditionIdFromApiValue(apiValue) {
+  if (!apiValue) return null;
+  const normalized = String(apiValue).trim().toLowerCase();
+  for (const id of CONDITION_IDS) {
+    const c = CONDITIONS[id];
+    if (c.apiValue.toLowerCase() === normalized || id === normalized) {
+      return id;
+    }
+  }
+  return null;
+}

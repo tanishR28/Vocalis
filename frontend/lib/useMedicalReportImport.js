@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useAuthScopeId } from './useAuthScope';
 import { getProfile, updateProfile } from './profile';
 import {
   clearReportImport,
@@ -8,12 +9,13 @@ import {
   saveReportImport,
   toReportImportResult,
   REPORT_IMPORT_CHANGED,
+  AUTH_USER_CHANGED,
 } from './reportImport';
 import { normalizeStructuredReport } from './reportDisplay';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { apiFetch, getApiUserId, withUserIdParams } from './api';
 
 export function useMedicalReportImport({ onImportSuccess, onImportRemoved } = {}) {
+  const { userId, authReady } = useAuthScopeId();
   const [selectedReportFile, setSelectedReportFile] = useState(null);
   const [selectedReportFileName, setSelectedReportFileName] = useState('');
   const [uploadedReportFileName, setUploadedReportFileName] = useState('');
@@ -25,24 +27,76 @@ export function useMedicalReportImport({ onImportSuccess, onImportRemoved } = {}
   const [showDemographicsModal, setShowDemographicsModal] = useState(false);
   const reportFileInputRef = useRef(null);
 
-  useEffect(() => {
-    function hydrateFromStorage() {
-      const storedReport = getStoredReportImport();
-      if (storedReport) {
-        setReportImportResult(toReportImportResult(storedReport));
-        setUploadedReportFileName(storedReport.filename || 'Imported report');
-        setShowReportUploadForm(false);
-      } else {
-        setReportImportResult(null);
-        setUploadedReportFileName('');
-        setShowReportUploadForm(false);
-      }
+  async function fetchImportStatus() {
+    if (!authReady) return { active: false };
+    try {
+      const response = await apiFetch(`/api/import-status?${withUserIdParams().toString()}`);
+      if (!response.ok) return { active: false };
+      return response.json();
+    } catch {
+      return { active: false };
+    }
+  }
+
+  async function hydrateFromStorage() {
+    if (!authReady) return;
+
+    const status = await fetchImportStatus();
+    if (!status?.active) {
+      if (userId) clearReportImport(userId);
+      else clearReportImport();
+      setReportImportResult(null);
+      setUploadedReportFileName('');
+      setShowReportUploadForm(false);
+      return;
     }
 
+    const storedReport = getStoredReportImport(userId);
+    if (storedReport && storedReport.userId && userId && storedReport.userId !== userId) {
+      clearReportImport(userId);
+      setReportImportResult(null);
+      setUploadedReportFileName('');
+      setShowReportUploadForm(false);
+      return;
+    }
+
+    if (storedReport) {
+      setReportImportResult(toReportImportResult(storedReport));
+      setUploadedReportFileName(storedReport.filename || status.filename || 'Imported report');
+      setShowReportUploadForm(false);
+      return;
+    }
+
+    if (status.active) {
+      setReportImportResult({
+        filename: status.filename || 'Imported report',
+        imported_rows: status.row_count ?? 0,
+        importedAt: null,
+      });
+      setUploadedReportFileName(status.filename || 'Imported report');
+      setShowReportUploadForm(false);
+      return;
+    }
+
+    setReportImportResult(null);
+    setUploadedReportFileName('');
+    setShowReportUploadForm(false);
+  }
+
+  useEffect(() => {
     hydrateFromStorage();
-    window.addEventListener(REPORT_IMPORT_CHANGED, hydrateFromStorage);
-    return () => window.removeEventListener(REPORT_IMPORT_CHANGED, hydrateFromStorage);
-  }, []);
+
+    function onChanged() {
+      hydrateFromStorage();
+    }
+
+    window.addEventListener(REPORT_IMPORT_CHANGED, onChanged);
+    window.addEventListener(AUTH_USER_CHANGED, onChanged);
+    return () => {
+      window.removeEventListener(REPORT_IMPORT_CHANGED, onChanged);
+      window.removeEventListener(AUTH_USER_CHANGED, onChanged);
+    };
+  }, [userId, authReady]);
 
   const structuredReport = useMemo(() => {
     if (!reportImportResult?.report) return null;
@@ -56,8 +110,10 @@ export function useMedicalReportImport({ onImportSuccess, onImportRemoved } = {}
     formData.append('file', file);
     if (profile?.age != null) formData.append('age', String(profile.age));
     if (profile?.sex === 0 || profile?.sex === 1) formData.append('sex', String(profile.sex));
+    const apiUserId = getApiUserId();
+    if (apiUserId) formData.append('user_id', apiUserId);
 
-    const response = await fetch(`${API_URL}/api/preview-medical-records`, {
+    const response = await apiFetch('/api/preview-medical-records', {
       method: 'POST',
       body: formData,
     });
@@ -75,8 +131,10 @@ export function useMedicalReportImport({ onImportSuccess, onImportRemoved } = {}
     formData.append('file', file);
     if (age != null) formData.append('age', String(age));
     if (sex === 0 || sex === 1) formData.append('sex', String(sex));
+    const apiUserId = getApiUserId();
+    if (apiUserId) formData.append('user_id', apiUserId);
 
-    const response = await fetch(`${API_URL}/api/extract-medical-records`, {
+    const response = await apiFetch('/api/extract-medical-records', {
       method: 'POST',
       body: formData,
     });
@@ -98,7 +156,7 @@ export function useMedicalReportImport({ onImportSuccess, onImportRemoved } = {}
 
     try {
       const data = await uploadReportWithDemographics(selectedReportFile, age, sex);
-      const saved = saveReportImport(data);
+      const saved = saveReportImport(data, userId);
       setReportImportResult(toReportImportResult(saved) || data);
       setUploadedReportFileName(data?.filename || selectedReportFile?.name || 'Uploaded file');
       setShowReportUploadForm(false);
@@ -173,23 +231,20 @@ export function useMedicalReportImport({ onImportSuccess, onImportRemoved } = {}
 
   async function handleRemoveReport() {
     const filename = uploadedReportFileName || reportImportResult?.filename || null;
-    const profile = getProfile();
 
     try {
-      const params = new URLSearchParams();
+      const params = withUserIdParams();
       if (filename) params.set('filename', filename);
-      if (profile?.userId) params.set('user_id', profile.userId);
 
       const query = params.toString();
-      await fetch(
-        `${API_URL}/api/imported-medical-records${query ? `?${query}` : ''}`,
-        { method: 'DELETE' },
-      );
+      await apiFetch(`/api/imported-medical-records${query ? `?${query}` : ''}`, {
+        method: 'DELETE',
+      });
     } catch {
       // Still clear local UI if backend is offline
     }
 
-    clearReportImport();
+    clearReportImport(userId);
     setReportImportResult(null);
     setUploadedReportFileName('');
     setShowReportUploadForm(true);

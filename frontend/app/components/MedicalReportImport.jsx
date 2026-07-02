@@ -11,7 +11,9 @@ import {
   dismissDashboardImport,
   isDashboardImportDismissed,
   REPORT_IMPORT_CHANGED,
+  AUTH_USER_CHANGED,
 } from '../../lib/reportImport';
+import { useAuthScopeId } from '../../lib/useAuthScope';
 
 export function HistoryExportPanel() {
   const [exportError, setExportError] = useState('');
@@ -415,24 +417,29 @@ function HistoryReportDetail({
 }
 
 export default function MedicalReportImport({ variant = 'dashboard', onImportSuccess, onImportRemoved }) {
+  const { userId } = useAuthScopeId();
   const [dashboardDismissed, setDashboardDismissed] = useState(false);
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
 
   useEffect(() => {
     if (variant === 'dashboard') {
-      setDashboardDismissed(isDashboardImportDismissed());
+      setDashboardDismissed(isDashboardImportDismissed(userId));
     }
-  }, [variant]);
+  }, [variant, userId]);
 
   useEffect(() => {
     function onImportChanged() {
       if (variant === 'dashboard') {
-        setDashboardDismissed(isDashboardImportDismissed());
+        setDashboardDismissed(isDashboardImportDismissed(userId));
       }
     }
     window.addEventListener(REPORT_IMPORT_CHANGED, onImportChanged);
-    return () => window.removeEventListener(REPORT_IMPORT_CHANGED, onImportChanged);
-  }, [variant]);
+    window.addEventListener(AUTH_USER_CHANGED, onImportChanged);
+    return () => {
+      window.removeEventListener(REPORT_IMPORT_CHANGED, onImportChanged);
+      window.removeEventListener(AUTH_USER_CHANGED, onImportChanged);
+    };
+  }, [variant, userId]);
   const {
     selectedReportFileName,
     uploadedReportFileName,
@@ -477,7 +484,7 @@ export default function MedicalReportImport({ variant = 'dashboard', onImportSuc
   const onCancel = () => setShowReportUploadForm(false);
 
   function handleDashboardDismiss() {
-    dismissDashboardImport();
+    dismissDashboardImport(userId);
     setDashboardDismissed(true);
   }
 

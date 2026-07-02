@@ -46,7 +46,95 @@ function parseTimestamp(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-export function buildInsightsTimeline(historyItems, rangeKey = '30d') {
+function dayKey(value) {
+  const date = parseTimestamp(value);
+  if (!date) return null;
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+const DAILY_AVG_NUMERIC_KEYS = [
+  'health_score',
+  'severity',
+  'motor_updrs',
+  'pitch_mean',
+  'pitch_std',
+  'jitter',
+  'shimmer',
+  'hnr',
+  'speech_rate',
+  'pause_count',
+  'avg_pause',
+  ...CLINICAL_INSIGHT_CATALOG.map((def) => def.id),
+];
+
+function averageNumbers(values) {
+  const nums = values.filter((v) => Number.isFinite(v));
+  if (!nums.length) return null;
+  return nums.reduce((sum, v) => sum + v, 0) / nums.length;
+}
+
+/** Multiple recordings on the same calendar day → one averaged point for charts. */
+export function aggregateTimelineByDay(rows) {
+  if (!rows?.length) return [];
+
+  const byDay = new Map();
+  for (const row of rows) {
+    const key = dayKey(row.date);
+    if (!key) continue;
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(row);
+  }
+
+  const aggregated = [];
+  for (const [key, sessions] of byDay) {
+    if (sessions.length === 1) {
+      aggregated.push({
+        ...sessions[0],
+        session_count: 1,
+        session_ids: [sessions[0].id],
+        is_daily_average: false,
+      });
+      continue;
+    }
+
+    const latest = sessions[sessions.length - 1];
+    const averaged = { ...latest };
+    for (const field of DAILY_AVG_NUMERIC_KEYS) {
+      const mean = averageNumbers(sessions.map((s) => Number(s[field])));
+      if (mean !== null) averaged[field] = Number(mean.toFixed(2));
+    }
+    averaged.session_count = sessions.length;
+    averaged.session_ids = sessions.map((s) => s.id);
+    averaged.is_daily_average = true;
+    averaged.title = `${sessions.length} sessions (daily avg)`;
+    const [year, month, day] = key.split('-').map(Number);
+    averaged.date = new Date(year, month - 1, day, 12, 0, 0).toISOString();
+    averaged.dateLabel = formatAxisDate(averaged.date);
+    aggregated.push(averaged);
+  }
+
+  aggregated.sort((a, b) => {
+    const da = parseTimestamp(a.date)?.getTime() ?? 0;
+    const db = parseTimestamp(b.date)?.getTime() ?? 0;
+    return da - db;
+  });
+
+  return aggregated.map((row, index, arr) => {
+    const start = Math.max(0, index - 2);
+    const window = arr.slice(start, index + 1).map((r) => Number(r.health_score ?? 0));
+    return {
+      ...row,
+      health_score_avg3: window.length
+        ? Number((window.reduce((s, v) => s + v, 0) / window.length).toFixed(1))
+        : row.health_score,
+    };
+  });
+}
+
+export function buildInsightsTimeline(historyItems, rangeKey = '30d', { aggregateByDay = true } = {}) {
   const range = TIME_RANGES[rangeKey] || TIME_RANGES['30d'];
   const now = Date.now();
   const cutoff = range.days ? now - range.days * 86400000 : null;
@@ -67,7 +155,7 @@ export function buildInsightsTimeline(historyItems, rangeKey = '30d') {
 
   const limited = range.limit ? filtered.slice(-range.limit) : filtered;
 
-  return limited.map((item, index, arr) => {
+  const sessionRows = limited.map((item, index, arr) => {
     const biomarkers = item.biomarkers || {};
     const raw = biomarkers.raw_features || {};
     const signals = raw.signals || {};
@@ -111,8 +199,13 @@ export function buildInsightsTimeline(historyItems, rangeKey = '30d') {
       ? Number((window.reduce((s, v) => s + v, 0) / window.length).toFixed(1))
       : healthScore;
 
+    row.session_count = 1;
+    row.is_daily_average = false;
+
     return row;
   });
+
+  return aggregateByDay ? aggregateTimelineByDay(sessionRows) : sessionRows;
 }
 
 export function formatAxisDate(value) {

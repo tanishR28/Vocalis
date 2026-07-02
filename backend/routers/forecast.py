@@ -5,10 +5,11 @@ import traceback
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header
 from fastapi.responses import JSONResponse
 
 from config import ML_DIR
+from auth import resolve_user_id
 from models.schemas import ParkinsonForecastRequest, ParkinsonForecastResponse
 from routers.analysis import supabase
 from services.lstm_history import (
@@ -33,13 +34,17 @@ except ImportError as import_error:
 
 
 @router.post("/parkinsons", response_model=ParkinsonForecastResponse)
-async def forecast_parkinsons_progression(body: ParkinsonForecastRequest):
+async def forecast_parkinsons_progression(
+    body: ParkinsonForecastRequest,
+    authorization: Optional[str] = Header(None),
+):
     """Predict future motor_UPDRS from the patient's last N LSTM history rows."""
     try:
+        user_id = resolve_user_id(authorization, body.user_id)
         sessions_required = lstm_sequence_length()
         history_rows, sessions_available = fetch_parkinsons_lstm_history(
             supabase,
-            user_id=body.user_id,
+            user_id=user_id,
         )
 
         if sessions_available < sessions_required:
@@ -82,10 +87,14 @@ async def forecast_parkinsons_progression(body: ParkinsonForecastRequest):
 
 
 @router.get("/parkinsons/status", response_model=ParkinsonForecastResponse)
-async def forecast_parkinsons_status(user_id: Optional[str] = None):
+async def forecast_parkinsons_status(
+    user_id: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+):
     """Return how many complete LSTM sessions are available (no prediction)."""
     from services.lstm_history import fetch_all_complete_lstm_rows
 
+    user_id = resolve_user_id(authorization, user_id)
     sessions_required = lstm_sequence_length()
     all_rows = fetch_all_complete_lstm_rows(supabase, user_id=user_id)
     sessions_available = len(all_rows)

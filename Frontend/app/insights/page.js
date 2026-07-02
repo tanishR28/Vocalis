@@ -33,8 +33,9 @@ import {
   hasAcousticData,
   latestTimelineRow,
 } from '../../lib/insightsData';
+import { apiFetch, withUserIdParams } from '../../lib/api';
+import { useAuthScopeId } from '../../lib/useAuthScope';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const MIN_TREND_SESSIONS = 3;
 
 function EmptySection({ title, message, actionHref, actionLabel }) {
@@ -52,17 +53,20 @@ function EmptySection({ title, message, actionHref, actionLabel }) {
 }
 
 export default function InsightsPage() {
+  const { userId, authReady } = useAuthScopeId();
   const [historyItems, setHistoryItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [rangeKey, setRangeKey] = useState('30d');
   const trendRefs = useRef({});
 
   useEffect(() => {
+    if (!authReady) return;
+
     let active = true;
 
     async function loadHistory() {
       try {
-        const response = await fetch(`${API_URL}/api/history?limit=200`);
+        const response = await apiFetch(`/api/history?${withUserIdParams({ limit: 200 }).toString()}`);
         if (!response.ok) return;
         const data = await response.json();
         if (active) {
@@ -75,11 +79,12 @@ export default function InsightsPage() {
       }
     }
 
+    setLoading(true);
     loadHistory();
     return () => {
       active = false;
     };
-  }, []);
+  }, [authReady, userId]);
 
   const timeline = useMemo(
     () => buildInsightsTimeline(historyItems, rangeKey),

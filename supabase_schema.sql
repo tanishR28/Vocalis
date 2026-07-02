@@ -1,17 +1,19 @@
 -- =============================================
--- Voice Biomarker Disease Tracking
+-- Vocalis — Voice Biomarker Disease Tracking
 -- Supabase Database Schema
 -- =============================================
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- ── Profiles Table ──
+-- ── Profiles Table (id = auth.users.id for per-user cloud sync) ──
 CREATE TABLE IF NOT EXISTS profiles (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     email TEXT UNIQUE,
     full_name TEXT,
-    condition TEXT, -- Primary health condition being tracked
+    condition TEXT, -- Primary health condition being tracked (e.g. Parkinson's)
+    age INT CHECK (age IS NULL OR (age >= 18 AND age <= 100)),
+    sex INT CHECK (sex IS NULL OR sex IN (0, 1)), -- 0 female, 1 male (UPDRS model)
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -20,7 +22,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 CREATE TABLE IF NOT EXISTS recordings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
-    audio_url TEXT, -- Supabase Storage URL
+    audio_url TEXT, -- optional; Vocalis does not upload audio to Storage (scores only)
     duration FLOAT, -- Recording duration in seconds
     recorded_at TIMESTAMPTZ DEFAULT NOW(),
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'analyzed', 'error')),
@@ -97,6 +99,10 @@ CREATE POLICY "Users can update own profile"
     ON profiles FOR UPDATE
     USING (auth.uid() = id);
 
+CREATE POLICY "Users can insert own profile"
+    ON profiles FOR INSERT
+    WITH CHECK (auth.uid() = id);
+
 CREATE POLICY "Users can view own recordings"
     ON recordings FOR SELECT
     USING (auth.uid() = user_id);
@@ -117,9 +123,37 @@ CREATE POLICY "Users can update own alerts"
     ON alerts FOR UPDATE
     USING (auth.uid() = user_id);
 
--- ── Storage Bucket ──
--- Run this in Supabase Dashboard > Storage
--- Create a bucket named 'voice-recordings' with public access disabled
+-- ── Storage (optional — not used by Vocalis; audio is analyzed in-memory only) ──
+-- Skip creating voice-recordings bucket to stay within Supabase free tier.
+
+-- ── Auto-create profile row on signup ──
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    INSERT INTO public.profiles (id, email, full_name)
+    VALUES (
+        NEW.id,
+        NEW.email,
+        COALESCE(NEW.raw_user_meta_data->>'full_name', 'Patient')
+    )
+    ON CONFLICT (id) DO NOTHING;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW
+    EXECUTE FUNCTION public.handle_new_user();
+
+-- ── Existing projects: run once if profiles predates age/sex columns ──
+-- ALTER TABLE profiles ADD COLUMN IF NOT EXISTS age INT CHECK (age IS NULL OR (age >= 18 AND age <= 100));
+-- ALTER TABLE profiles ADD COLUMN IF NOT EXISTS sex INT CHECK (sex IS NULL OR sex IN (0, 1));
 
 -- ── Refresh PostgREST Schema Cache ──
 -- Run after creating or updating tables so Supabase API sees the latest schema immediately.

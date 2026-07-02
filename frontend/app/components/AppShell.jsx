@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getProfile, clearProfile } from '@/lib/profile';
+import { clearReportImport } from '@/lib/reportImport';
 import { getCondition } from '@/lib/conditions';
 import { getSidebarCollapsed, setSidebarCollapsed } from '@/lib/sidebar';
 import { Button } from '@/components/ui/button';
@@ -32,6 +33,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import NavbarSessionCalendar from './NavbarSessionCalendar';
+import AlertsBell from './AlertsBell';
+import { useAuth } from '../../lib/auth/AuthProvider';
 
 const NAV = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -165,6 +168,7 @@ export default function AppShell({ children, title, headerActions }) {
     });
   }
 
+  const { signOut } = useAuth();
   const condition = profile ? getCondition(profile.conditionId) : null;
   const initials = (profile?.patientName || 'P')
     .split(' ')
@@ -173,10 +177,13 @@ export default function AppShell({ children, title, headerActions }) {
     .slice(0, 2)
     .toUpperCase();
 
-  function handleExit() {
+  async function handleExit() {
+    const userId = getProfile()?.userId;
     clearProfile();
+    clearReportImport(userId);
     localStorage.removeItem('vocalis_latest_analysis');
     localStorage.removeItem('vocalis_just_updated');
+    await signOut();
     router.push('/onboarding');
   }
 
@@ -238,6 +245,7 @@ export default function AppShell({ children, title, headerActions }) {
 
           {headerActions ? <div className="flex items-center gap-2">{headerActions}</div> : null}
 
+          <AlertsBell />
           <NavbarSessionCalendar />
 
           <DropdownMenu>
@@ -265,6 +273,10 @@ export default function AppShell({ children, title, headerActions }) {
               <DropdownMenuItem onClick={() => router.push('/settings')}>
                 <Settings className="h-4 w-4" />
                 Settings
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => router.push('/login')}>
+                <LogOut className="h-4 w-4" />
+                Account
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleExit} className="text-error focus:text-error">

@@ -1,6 +1,8 @@
 import './globals.css';
 import OnboardingGate from './components/OnboardingGate';
 import AppLayout from './components/AppLayout';
+import { AuthProvider } from '../lib/auth/AuthProvider';
+import ApiAuthBridge from './components/ApiAuthBridge';
 
 export const metadata = {
   title: 'Vocalis',
@@ -15,9 +17,12 @@ export default function RootLayout({ children }) {
         <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
       </head>
       <body>
-        <OnboardingGate>
-          <AppLayout>{children}</AppLayout>
-        </OnboardingGate>
+        <AuthProvider>
+          <ApiAuthBridge />
+          <OnboardingGate>
+            <AppLayout>{children}</AppLayout>
+          </OnboardingGate>
+        </AuthProvider>
       </body>
     </html>
   );

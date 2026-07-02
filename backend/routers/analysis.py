@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, File, Form, Query, UploadFile
+from fastapi import APIRouter, File, Form, Header, Query, UploadFile
 from fastapi.responses import JSONResponse, Response
 from supabase import Client, create_client
 
@@ -31,6 +31,7 @@ from services.lstm_history import (
     remove_imported_medical_history,
     fetch_local_history_items,
     is_import_active,
+    get_import_status,
 )
 from services.clinical_history import (
     build_clinical_insights,
@@ -43,6 +44,8 @@ from services.parkinson_export import (
     render_export_csv,
     render_export_pdf,
 )
+from auth import resolve_user_id
+from json_safe import json_safe
 from models.schemas import AnalysisResponse, ManualAnalysisRequest
 
 router = APIRouter(prefix="/api", tags=["analysis"])
@@ -622,7 +625,7 @@ def _persist_document_rows_to_supabase(
             raw_features["subject#"] = row.get("subject#")
         lstm_row = row.get("lstm_row")
         if is_complete_lstm_row(lstm_row):
-            raw_features["lstm_row"] = _json_safe(lstm_row)
+            raw_features["lstm_row"] = json_safe(lstm_row)
             raw_features["motor_updrs"] = float(lstm_row["motor_UPDRS"])
 
         biomarkers_payload.append(
@@ -656,27 +659,6 @@ def _persist_document_rows_to_supabase(
         if local_saved:
             return True, local_saved, str(db_error)
         return False, 0, str(db_error)
-
-
-def _json_safe(value: Any) -> Any:
-    try:
-        import numpy as np  # type: ignore
-    except Exception:
-        np = None  # type: ignore
-
-    if value is None:
-        return None
-    if np is not None and isinstance(value, np.ndarray):
-        return [_json_safe(item) for item in value.tolist()]
-    if np is not None and isinstance(value, np.generic):
-        return value.item()
-    if isinstance(value, dict):
-        return {key: _json_safe(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_json_safe(item) for item in value]
-    if isinstance(value, tuple):
-        return [_json_safe(item) for item in value]
-    return value
 
 
 def _save_upload_to_tempfile(upload: UploadFile) -> str:
@@ -814,9 +796,9 @@ def _persist_analysis_to_supabase(
         health_score=float(health_score),
         health_category=str(report.get("risk_level", "Unknown")),
         report=report,
-        signals=_json_safe(signals) if isinstance(signals, dict) else signals,
+        signals=json_safe(signals) if isinstance(signals, dict) else signals,
         scores=scores,
-        clinical_insights=clinical_insights,
+        clinical_insights=json_safe(clinical_insights),
     )
 
     if supabase is None:
@@ -851,8 +833,8 @@ def _persist_analysis_to_supabase(
             "confidence": float(report.get("confidence", 0.0)),
             "is_anomaly": bool(float(report.get("disease_score", 0.0)) > 0.7),
             "raw_features": {
-                "signals": _json_safe(signals),
-                "biomarkers": _json_safe(biomarkers),
+                "signals": json_safe(signals),
+                "biomarkers": json_safe(biomarkers),
                 "disease_score": float(report.get("disease_score", 0.0)),
                 "prediction": report.get("prediction", "Unknown"),
                 "severity": float(report.get("severity", 0.0)),
@@ -863,9 +845,9 @@ def _persist_analysis_to_supabase(
                 "cough_detected": bool(report.get("cough_detected", False)),
                 "wheeze_detected": bool(report.get("wheeze_detected", False)),
                 "motor_updrs": float(report.get("motor_updrs")) if report.get("motor_updrs") is not None else None,
-                "lstm_row": _json_safe(report.get("lstm_row")),
+                "lstm_row": json_safe(report.get("lstm_row")),
                 "model_source": report.get("model_source"),
-                "clinical_insights": _json_safe(clinical_insights),
+                "clinical_insights": json_safe(clinical_insights),
             },
             "health_trend": report.get("health_trend", "stable"),
             "analyzed_at": analyzed_at_iso,
@@ -1033,10 +1015,34 @@ def _finalize_analysis(
 
 
 @router.get("/history")
-async def get_history(limit: int = 20, user_id: Optional[str] = None, source: str = "all"):
+async def get_history(
+    limit: int = 20,
+    user_id: Optional[str] = None,
+    source: str = "all",
+    authorization: Optional[str] = Header(None),
+):
     """Return recent analyzed recordings with linked biomarker rows."""
+    bearer_sent = bool(authorization and authorization.lower().startswith("bearer "))
+    user_id = resolve_user_id(authorization, user_id)
+
+    if bearer_sent and not user_id:
+        return {"items": []}
+
     items: list[dict[str, Any]] = []
     fetch_limit = max(1, min(limit, 100))
+
+    if supabase is not None and not user_id:
+        try:
+            local_items = merge_local_history_items(
+                fetch_local_history_items(user_id=None, limit=fetch_limit, source=source),
+                fetch_clinical_history_items(user_id=None, limit=fetch_limit),
+                source=source,
+                limit=fetch_limit,
+            )
+        except Exception:
+            traceback.print_exc()
+            local_items = []
+        return {"items": local_items}
 
     if supabase is not None:
         try:
@@ -1118,6 +1124,7 @@ async def get_history(limit: int = 20, user_id: Optional[str] = None, source: st
         items = local_items
     elif (
         source == "all"
+        and user_id
         and is_import_active(user_id)
         and len(local_items) > len(items)
     ):
@@ -1125,6 +1132,83 @@ async def get_history(limit: int = 20, user_id: Optional[str] = None, source: st
         items = local_items
 
     return {"items": items}
+
+
+@router.get("/import-status")
+async def import_status(
+    user_id: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+):
+    """Whether this user has an active imported medical report (server-side source of truth)."""
+    bearer_sent = bool(authorization and authorization.lower().startswith("bearer "))
+    user_id = resolve_user_id(authorization, user_id)
+
+    if bearer_sent and not user_id:
+        return {"active": False, "filename": None, "row_count": 0}
+
+    if user_id:
+        return get_import_status(user_id)
+
+    return get_import_status(None)
+
+
+@router.get("/alerts")
+async def get_alerts(
+    limit: int = 20,
+    unread_only: bool = True,
+    user_id: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+):
+    """Return recent biomarker alerts for the authenticated user."""
+    user_id = resolve_user_id(authorization, user_id)
+    fetch_limit = max(1, min(limit, 50))
+
+    if supabase is None or not user_id:
+        return {"items": [], "unread_count": 0}
+
+    try:
+        query = (
+            supabase.table("alerts")
+            .select("id,alert_type,severity,message,biomarker,is_read,created_at,recording_id")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(fetch_limit)
+        )
+        if unread_only:
+            query = query.eq("is_read", False)
+        response = query.execute()
+        items = response.data or []
+        unread_resp = (
+            supabase.table("alerts")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("is_read", False)
+            .execute()
+        )
+        unread_count = len(unread_resp.data or [])
+        return {"items": items, "unread_count": unread_count}
+    except Exception as error:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Could not load alerts: {str(error) or repr(error)}"},
+        )
+
+
+@router.patch("/alerts/{alert_id}/read")
+async def mark_alert_read(
+    alert_id: str,
+    user_id: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+):
+    user_id = resolve_user_id(authorization, user_id)
+    if supabase is None or not user_id:
+        return JSONResponse(status_code=400, content={"error": "Alerts require Supabase and a signed-in user."})
+    try:
+        supabase.table("alerts").update({"is_read": True}).eq("id", alert_id).eq("user_id", user_id).execute()
+        return {"ok": True}
+    except Exception as error:
+        return JSONResponse(status_code=500, content={"error": str(error)})
 
 
 @router.post("/preview-medical-records")
@@ -1181,8 +1265,14 @@ async def extract_medical_records(
     file: UploadFile = File(...),
     age: Optional[str] = Form(None),
     sex: Optional[str] = Form(None),
+    user_id: Optional[str] = Form(None),
+    authorization: Optional[str] = Header(None),
 ):
     """Extract text from uploaded medical pages/images and infer likely conditions."""
+    bearer_sent = bool(authorization and authorization.lower().startswith("bearer "))
+    user_id = resolve_user_id(authorization, user_id)
+    if bearer_sent and not user_id:
+        return JSONResponse(status_code=401, content={"error": "Invalid or expired session. Please sign in again."})
     temp_file_name = _save_upload_to_tempfile(file)
     try:
         try:
@@ -1225,6 +1315,7 @@ async def extract_medical_records(
             detections=detections,
             source_type=source_type,
             filename=file.filename,
+            user_id=user_id,
         )
 
         if not saved and save_error and save_error != SUPABASE_NOT_CONFIGURED_ERROR and imported_rows == 0:
@@ -1263,8 +1354,10 @@ async def extract_medical_records(
 async def delete_imported_medical_records(
     filename: Optional[str] = None,
     user_id: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
 ):
     """Remove imported report rows from LSTM history and DB; keep real voice recordings only."""
+    user_id = resolve_user_id(authorization, user_id)
     try:
         result = remove_imported_medical_history(supabase, user_id=user_id, filename=filename)
         return {
@@ -1287,8 +1380,10 @@ async def export_parkinson_history(
     sex: int = Query(..., ge=0, le=1),
     subject_id: int = Query(1, ge=1),
     user_id: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
 ):
     """Export up to 30 latest history rows as Oxford CSV or Vocalis PDF (import + recordings merged)."""
+    user_id = resolve_user_id(authorization, user_id)
     try:
         rows, base_name = build_parkinson_history_export(
             supabase,
@@ -1333,8 +1428,10 @@ async def analyze_voice(
     age: Optional[str] = Form(None),
     sex: Optional[str] = Form(None),
     onboarded_at: Optional[str] = Form(None),
+    authorization: Optional[str] = Header(None),
 ):
     """Voice biomarker analysis using XGBoost or Parkinson UPDRS model."""
+    user_id = resolve_user_id(authorization, user_id)
     temp_file_name = _save_upload_to_tempfile(file)
     try:
         file_size = os.path.getsize(temp_file_name)
@@ -1377,9 +1474,13 @@ async def analyze_voice(
 
 
 @router.post("/analyze-manual", response_model=AnalysisResponse)
-async def analyze_voice_manual(body: ManualAnalysisRequest):
+async def analyze_voice_manual(
+    body: ManualAnalysisRequest,
+    authorization: Optional[str] = Header(None),
+):
     """Dev/testing: run analysis from manual feature values (no audio)."""
     try:
+        user_id = resolve_user_id(authorization, body.user_id)
         target_disease = _normalize_disease(body.disease)
         if not target_disease:
             return JSONResponse(
@@ -1408,7 +1509,7 @@ async def analyze_voice_manual(body: ManualAnalysisRequest):
 
         recording_id = str(uuid.uuid4())
         report = predict_voice_manual(target_disease, body.features, patient_meta=patient_meta)
-        return _finalize_analysis(target_disease, report, body.user_id, recording_id)
+        return _finalize_analysis(target_disease, report, user_id, recording_id)
 
     except Exception as e:
         err_msg = str(e) or repr(e)

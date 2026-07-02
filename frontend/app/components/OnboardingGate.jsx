@@ -2,27 +2,91 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { isOnboardingComplete } from '../../lib/profile';
+import { useAuth } from '../../lib/auth/AuthProvider';
+import { isOnboardingComplete, linkUserToProfile } from '../../lib/profile';
+import { hydrateProfileFromSupabase } from '../../lib/supabase/profileSync';
+import { isSupabaseConfigured } from '../../lib/supabase/client';
+
+const PUBLIC_PATHS = new Set(['/login', '/onboarding']);
 
 export default function OnboardingGate({ children }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [allowed, setAllowed] = useState(pathname === '/onboarding');
+  const { user, loading, requireAuth } = useAuth();
+  const [profileReady, setProfileReady] = useState(false);
+  const [allowed, setAllowed] = useState(PUBLIC_PATHS.has(pathname));
+
+  // Pull cloud profile after login so age/sex/condition work on any device.
+  useEffect(() => {
+    if (loading) return;
+
+    if (!user) {
+      setProfileReady(true);
+      return;
+    }
+
+    linkUserToProfile(user.id);
+
+    if (!isSupabaseConfigured()) {
+      setProfileReady(true);
+      return;
+    }
+
+    let cancelled = false;
+    setProfileReady(false);
+    hydrateProfileFromSupabase(user.id).finally(() => {
+      if (!cancelled) setProfileReady(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, loading]);
 
   useEffect(() => {
-    if (pathname === '/onboarding') {
+    if (loading || !profileReady) return;
+
+    if (requireAuth && !user && pathname !== '/login') {
+      router.replace('/login');
+      setAllowed(false);
+      return;
+    }
+
+    if (pathname === '/login') {
+      if (user && isOnboardingComplete()) {
+        router.replace('/');
+        setAllowed(false);
+        return;
+      }
+      if (user && !isOnboardingComplete()) {
+        router.replace('/onboarding');
+        setAllowed(false);
+        return;
+      }
       setAllowed(true);
       return;
     }
+
+    if (pathname === '/onboarding') {
+      if (isOnboardingComplete()) {
+        router.replace('/');
+        setAllowed(false);
+        return;
+      }
+      setAllowed(true);
+      return;
+    }
+
     if (!isOnboardingComplete()) {
       router.replace('/onboarding');
       setAllowed(false);
       return;
     }
-    setAllowed(true);
-  }, [pathname, router]);
 
-  if (!allowed) {
+    setAllowed(true);
+  }, [pathname, router, user, loading, requireAuth, profileReady]);
+
+  if (loading || !profileReady || !allowed) {
     return (
       <div className="flex-1 flex items-center justify-center min-h-screen text-slate-500">
         Loading…

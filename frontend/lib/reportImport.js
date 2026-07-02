@@ -1,6 +1,16 @@
 const REPORT_IMPORT_KEY = 'vocalis_report_import';
+const LEGACY_REPORT_IMPORT_KEY = 'vocalis_report_import';
 const DASHBOARD_IMPORT_DISMISS_KEY = 'vocalis_report_import_dashboard_dismissed';
 export const REPORT_IMPORT_CHANGED = 'vocalis_report_import_changed';
+export const AUTH_USER_CHANGED = 'vocalis_auth_user_changed';
+
+function scopedImportKey(userId) {
+  return userId ? `${REPORT_IMPORT_KEY}:${userId}` : LEGACY_REPORT_IMPORT_KEY;
+}
+
+function scopedDismissKey(userId) {
+  return userId ? `${DASHBOARD_IMPORT_DISMISS_KEY}:${userId}` : DASHBOARD_IMPORT_DISMISS_KEY;
+}
 
 function notifyReportImportChange() {
   if (typeof window !== 'undefined') {
@@ -9,9 +19,10 @@ function notifyReportImportChange() {
 }
 
 /** Trim API payload before localStorage (drop huge extracted_text). */
-function toStoredPayload(data) {
+function toStoredPayload(data, userId = null) {
   if (!data) return null;
   return {
+    userId: userId || null,
     filename: data.filename || null,
     importedAt: new Date().toISOString(),
     imported_rows: data.imported_rows ?? 0,
@@ -25,27 +36,9 @@ function toStoredPayload(data) {
   };
 }
 
-export function isDashboardImportDismissed() {
-  if (typeof window === 'undefined') return false;
-  return localStorage.getItem(DASHBOARD_IMPORT_DISMISS_KEY) === '1';
-}
-
-export function dismissDashboardImport() {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(DASHBOARD_IMPORT_DISMISS_KEY, '1');
-  notifyReportImportChange();
-}
-
-export function clearDashboardImportDismiss() {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(DASHBOARD_IMPORT_DISMISS_KEY);
-}
-
-export function getStoredReportImport() {
-  if (typeof window === 'undefined') return null;
+function parseStored(raw) {
+  if (!raw) return null;
   try {
-    const raw = localStorage.getItem(REPORT_IMPORT_KEY);
-    if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed?.filename && !parsed?.imported_rows) return null;
     return parsed;
@@ -54,20 +47,87 @@ export function getStoredReportImport() {
   }
 }
 
-export function saveReportImport(apiResponse) {
+export function isDashboardImportDismissed(userId = null) {
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem(scopedDismissKey(userId)) === '1';
+}
+
+export function dismissDashboardImport(userId = null) {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(scopedDismissKey(userId), '1');
+  notifyReportImportChange();
+}
+
+export function clearDashboardImportDismiss(userId = null) {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(scopedDismissKey(userId));
+}
+
+export function getStoredReportImport(userId = null) {
   if (typeof window === 'undefined') return null;
-  const payload = toStoredPayload(apiResponse);
+
+  if (userId) {
+    return parseStored(localStorage.getItem(scopedImportKey(userId)));
+  }
+
+  return parseStored(localStorage.getItem(LEGACY_REPORT_IMPORT_KEY));
+}
+
+export function saveReportImport(apiResponse, userId = null) {
+  if (typeof window === 'undefined') return null;
+  const payload = toStoredPayload(apiResponse, userId);
   if (!payload) return null;
-  localStorage.setItem(REPORT_IMPORT_KEY, JSON.stringify(payload));
-  clearDashboardImportDismiss();
+
+  if (userId) {
+    localStorage.setItem(scopedImportKey(userId), JSON.stringify(payload));
+    localStorage.removeItem(LEGACY_REPORT_IMPORT_KEY);
+    localStorage.removeItem(DASHBOARD_IMPORT_DISMISS_KEY);
+  } else {
+    localStorage.setItem(LEGACY_REPORT_IMPORT_KEY, JSON.stringify(payload));
+  }
+
+  clearDashboardImportDismiss(userId);
   notifyReportImportChange();
   return payload;
 }
 
-export function clearReportImport() {
+export function clearReportImport(userId = null) {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(REPORT_IMPORT_KEY);
+  if (userId) {
+    localStorage.removeItem(scopedImportKey(userId));
+    localStorage.removeItem(scopedDismissKey(userId));
+  } else {
+    localStorage.removeItem(LEGACY_REPORT_IMPORT_KEY);
+    localStorage.removeItem(DASHBOARD_IMPORT_DISMISS_KEY);
+  }
   notifyReportImportChange();
+}
+
+/** Drop anonymous/legacy import cache when a real user signs in. */
+export function clearLegacyReportImport() {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(LEGACY_REPORT_IMPORT_KEY);
+  localStorage.removeItem(DASHBOARD_IMPORT_DISMISS_KEY);
+  notifyReportImportChange();
+}
+
+export function onAuthUserChanged(userId) {
+  if (typeof window === 'undefined') return;
+
+  const previousUserId = sessionStorage.getItem('vocalis_last_auth_user_id') || '';
+  const nextUserId = userId || '';
+
+  if (previousUserId && previousUserId !== nextUserId) {
+    localStorage.removeItem('vocalis_latest_analysis');
+    localStorage.removeItem('vocalis_just_updated');
+  }
+
+  if (nextUserId) {
+    clearLegacyReportImport();
+  }
+
+  sessionStorage.setItem('vocalis_last_auth_user_id', nextUserId);
+  window.dispatchEvent(new Event(AUTH_USER_CHANGED));
 }
 
 /** Rehydrate shape expected by dashboard (matches API response subset). */

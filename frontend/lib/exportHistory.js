@@ -1,14 +1,14 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { apiFetch, getApiUserId, withUserIdParams } from './api';
 
 export async function downloadParkinsonHistoryExport({ format, age, sex, subjectId = 1 }) {
-  const params = new URLSearchParams({
+  const params = withUserIdParams({
     format,
     age: String(age),
     sex: String(sex),
     subject_id: String(subjectId),
   });
 
-  const response = await fetch(`${API_URL}/api/export-parkinson-history?${params.toString()}`);
+  const response = await apiFetch(`/api/export-parkinson-history?${params.toString()}`);
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `Export failed (${response.status})`);
@@ -28,3 +28,5 @@ export async function downloadParkinsonHistoryExport({ format, age, sex, subject
   link.remove();
   URL.revokeObjectURL(url);
 }
+
+export { getApiUserId };

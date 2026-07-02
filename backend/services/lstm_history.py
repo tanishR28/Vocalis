@@ -11,6 +11,8 @@ ML_DIR = Path(__file__).resolve().parents[2] / "ML"
 if str(ML_DIR) not in sys.path:
     sys.path.insert(0, str(ML_DIR))
 
+from json_safe import json_safe
+
 from ml_config import load_lstm_feature_columns, lstm_sequence_length  # type: ignore
 
 LOCAL_LSTM_PATH = Path(__file__).resolve().parents[1] / ".data" / "lstm_history.json"
@@ -72,7 +74,7 @@ def _load_local_store() -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
 def _save_local_store(data: Dict[str, Dict[str, List[Dict[str, Any]]]]) -> None:
     LOCAL_LSTM_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(LOCAL_LSTM_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+        json.dump(json_safe(data), f, indent=2)
 
 
 def _load_import_state() -> Dict[str, Dict[str, Any]]:
@@ -89,7 +91,7 @@ def _load_import_state() -> Dict[str, Dict[str, Any]]:
 def _save_import_state(data: Dict[str, Dict[str, Any]]) -> None:
     IMPORT_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(IMPORT_STATE_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+        json.dump(json_safe(data), f, indent=2)
 
 
 def set_active_import(filename: Optional[str], row_count: int, user_id: Optional[str] = None) -> None:
@@ -114,6 +116,15 @@ def clear_active_import(user_id: Optional[str] = None) -> None:
 def is_import_active(user_id: Optional[str] = None) -> bool:
     state = _load_import_state().get(_local_key(user_id), {})
     return bool(state.get("active"))
+
+
+def get_import_status(user_id: Optional[str] = None) -> Dict[str, Any]:
+    state = _load_import_state().get(_local_key(user_id), {})
+    return {
+        "active": bool(state.get("active")),
+        "filename": state.get("filename"),
+        "row_count": int(state.get("row_count") or 0),
+    }
 
 
 def save_local_lstm_history(
@@ -193,6 +204,9 @@ def _fetch_supabase_lstm_rows(
     include_imported: bool = False,
 ) -> List[Dict[str, Any]]:
     complete_rows: List[Dict[str, Any]] = []
+
+    if not user_id:
+        return []
 
     try:
         recording_query = (

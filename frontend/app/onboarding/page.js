@@ -4,9 +4,12 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getConditionList } from '../../lib/conditions';
 import { getProfile, saveProfile } from '../../lib/profile';
+import { useAuth } from '../../lib/auth/AuthProvider';
+import { syncProfileToSupabase } from '../../lib/supabase/profileSync';
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const { user } = useAuth();
   const [selectedId, setSelectedId] = useState('');
   const [patientName, setPatientName] = useState('');
   const [age, setAge] = useState('');
@@ -25,7 +28,7 @@ export default function OnboardingPage() {
     }
   }, []);
 
-  function handleContinue() {
+  async function handleContinue() {
     if (!selectedId) {
       setError('Please select your monitoring condition.');
       return;
@@ -42,12 +45,16 @@ export default function OnboardingPage() {
       }
     }
     setError('');
-    saveProfile({
+    const profile = saveProfile({
       conditionId: selectedId,
       patientName,
       age: age ? Number(age) : undefined,
       sex: sex !== '' ? Number(sex) : undefined,
+      userId: user?.id,
     });
+    if (user?.id) {
+      await syncProfileToSupabase(profile, user.id, user.email);
+    }
     router.replace('/');
   }
 

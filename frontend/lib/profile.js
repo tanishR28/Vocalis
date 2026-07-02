@@ -31,7 +31,7 @@ function normalizeSex(sex) {
   return null;
 }
 
-export function saveProfile({ conditionId, patientName, age, sex }) {
+export function saveProfile({ conditionId, patientName, age, sex, userId }) {
   const existing = getProfile();
   const profile = {
     conditionId,
@@ -42,9 +42,33 @@ export function saveProfile({ conditionId, patientName, age, sex }) {
   const normalizedSex = normalizeSex(sex ?? existing?.sex);
   if (normalizedAge !== null) profile.age = normalizedAge;
   if (normalizedSex !== null) profile.sex = normalizedSex;
+  const resolvedUserId = userId ?? existing?.userId;
+  if (resolvedUserId) profile.userId = resolvedUserId;
   localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
   notifyProfileChange();
   return profile;
+}
+
+export function linkUserToProfile(userId) {
+  const existing = getProfile();
+  if (!existing || !userId) return existing;
+  const profile = { ...existing, userId };
+  localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  notifyProfileChange();
+  return profile;
+}
+
+/** Apply a profile row fetched from Supabase (merges with existing local age/sex). */
+export function applyRemoteProfile(remote) {
+  if (!remote?.conditionId || !remote?.userId) return null;
+  const existing = getProfile();
+  return saveProfile({
+    conditionId: remote.conditionId,
+    patientName: remote.patientName,
+    age: remote.age ?? existing?.age,
+    sex: remote.sex ?? existing?.sex,
+    userId: remote.userId,
+  });
 }
 
 export function updateProfile(updates) {

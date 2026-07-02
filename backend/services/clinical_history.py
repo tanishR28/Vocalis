@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from json_safe import json_safe
+
 RECORDING_SOURCE = "audio-analysis"
 IMPORT_SOURCE = "imported-medical-record"
 
@@ -61,7 +63,7 @@ def _load_store() -> Dict[str, List[Dict[str, Any]]]:
 def _save_store(data: Dict[str, List[Dict[str, Any]]]) -> None:
     CLINICAL_SESSIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(CLINICAL_SESSIONS_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+        json.dump(json_safe(data), f, indent=2)
 
 
 def build_clinical_insights(
