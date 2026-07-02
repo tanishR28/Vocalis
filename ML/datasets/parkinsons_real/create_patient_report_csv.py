@@ -6,9 +6,9 @@ import pandas as pd
 
 CSV_PATH = "parkinsons_telemonitoring_updrs.csv"
 
-PATIENT_ID = 18       # Change patient if required
-NUM_RECORDS = 30
-
+PATIENT_ID = int(input("Enter patient ID: "))       # Change patient if required
+NUM_RECORDS = 30      # 10+ rows required for LSTM forecast; 30 is a full month sample
+print(f"Creating history for patient {PATIENT_ID} with {NUM_RECORDS} records")
 OUTPUT_FILE = f"patient_{PATIENT_ID}_30_day_history.csv"
 
 # ==========================================

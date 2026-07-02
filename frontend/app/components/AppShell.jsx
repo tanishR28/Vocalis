@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import NavbarSessionCalendar from './NavbarSessionCalendar';
 
 const NAV = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -236,6 +237,8 @@ export default function AppShell({ children, title, headerActions }) {
           <h1 className="flex-1 truncate font-headline text-lg font-bold text-primary">{pageTitle}</h1>
 
           {headerActions ? <div className="flex items-center gap-2">{headerActions}</div> : null}
+
+          <NavbarSessionCalendar />
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

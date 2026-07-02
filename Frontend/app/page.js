@@ -1,14 +1,9 @@
 'use client';
 import Link from 'next/link';
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { getCondition } from '../lib/conditions';
 import { getProfile } from '../lib/profile';
-import {
-  getStoredReportImport,
-  saveReportImport,
-  clearReportImport,
-  toReportImportResult,
-} from '../lib/reportImport';
+import MedicalReportImport from './components/MedicalReportImport';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -62,111 +57,16 @@ function buildAreaPath(linePath) {
   return `${linePath} L700,240 L0,240 Z`;
 }
 
-function toDayKey(timestamp) {
-  const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) return null;
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
-function sameMonth(a, b) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
-}
-
-function buildCalendarCells(monthDate) {
-  const year = monthDate.getFullYear();
-  const month = monthDate.getMonth();
-  const firstDay = new Date(year, month, 1);
-  const firstWeekday = firstDay.getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-  const cells = [];
-  for (let i = 0; i < firstWeekday; i += 1) {
-    cells.push(null);
-  }
-  for (let day = 1; day <= daysInMonth; day += 1) {
-    cells.push(new Date(year, month, day));
-  }
-  return cells;
-}
-
-function formatBioValue(value, decimals = 4) {
-  if (value == null || !Number.isFinite(Number(value))) return '—';
-  const n = Number(value);
-  if (n !== 0 && Math.abs(n) < 0.0001) return n.toExponential(2);
-  if (Math.abs(n) >= 100) return n.toFixed(1);
-  return n.toFixed(decimals);
-}
-
-function normalizeStructuredReport(report) {
-  const rows = Array.isArray(report?.rows)
-    ? report.rows
-        .map((row) => {
-          const lstm = row.lstm_row || {};
-          const hasLstm = lstm.motor_UPDRS != null;
-          return {
-            day: Number(row.day),
-            breathScore: Number(row.breath_score),
-            pauseScore: Number(row.pause_score),
-            speechRate: Number(row.speech_rate),
-            healthScore: Number(row.health_score),
-            hasLstm,
-            motorUpdrs: hasLstm ? Number(lstm.motor_UPDRS) : null,
-            jitter: hasLstm ? Number(lstm['Jitter(%)']) : null,
-            shimmer: hasLstm ? Number(lstm.Shimmer) : null,
-            hnr: hasLstm ? Number(lstm.HNR) : null,
-            rpde: hasLstm ? Number(lstm.RPDE) : null,
-            ppe: hasLstm ? Number(lstm.PPE) : null,
-          };
-        })
-        .filter((row) => Number.isFinite(row.day))
-        .sort((a, b) => a.day - b.day)
-    : [];
-
-  const hasParkinsonBiomarkers = rows.some((row) => row.hasLstm);
-  const firstMotor = rows.find((r) => r.hasLstm)?.motorUpdrs ?? null;
-  const lastMotor = [...rows].reverse().find((r) => r.hasLstm)?.motorUpdrs ?? null;
-  const firstScore = rows.length ? rows[0].healthScore : null;
-  const lastScore = rows.length ? rows[rows.length - 1].healthScore : null;
-
-  return {
-    patientName: report?.patient_name || null,
-    disease: report?.disease || null,
-    rows,
-    hasParkinsonBiomarkers,
-    firstMotor,
-    lastMotor,
-    motorDelta: firstMotor != null && lastMotor != null ? lastMotor - firstMotor : null,
-    firstScore,
-    lastScore,
-    scoreDelta: firstScore !== null && lastScore !== null ? lastScore - firstScore : null,
-    finalScore: report?.final_health_score ?? null,
-    finalStatus: report?.final_health_status || null,
-  };
-}
-
 export default function DashboardPage() {
   const [mounted, setMounted] = useState(false);
   const [analysisData, setAnalysisData] = useState(null);
   const [historyItems, setHistoryItems] = useState([]);
   const [trendRange, setTrendRange] = useState('month');
-  const [showCalendar, setShowCalendar] = useState(false);
-  const [calendarMonth, setCalendarMonth] = useState(new Date());
-  const [selectedReportFile, setSelectedReportFile] = useState(null);
-  const [selectedReportFileName, setSelectedReportFileName] = useState('');
-  const [uploadedReportFileName, setUploadedReportFileName] = useState('');
-  const [isReportUploading, setIsReportUploading] = useState(false);
-  const [reportImportResult, setReportImportResult] = useState(null);
-  const [reportError, setReportError] = useState('');
   const [profile, setProfile] = useState(null);
   const [forecastStatus, setForecastStatus] = useState(null);
   const [forecastResult, setForecastResult] = useState(null);
   const [isForecastLoading, setIsForecastLoading] = useState(false);
   const [forecastError, setForecastError] = useState('');
-  const [showReportUploadForm, setShowReportUploadForm] = useState(false);
-  const reportFileInputRef = useRef(null);
 
   const condition = profile ? getCondition(profile.conditionId) : null;
 
@@ -179,50 +79,10 @@ export default function DashboardPage() {
         setAnalysisData(JSON.parse(stored));
       } catch (e) { console.error(e); }
     }
-
-    const storedReport = getStoredReportImport();
-    if (storedReport) {
-      setReportImportResult(toReportImportResult(storedReport));
-      setUploadedReportFileName(storedReport.filename || 'Imported report');
-      setShowReportUploadForm(false);
-    }
   }, []);
 
-  async function handleReportUpload() {
-    if (!selectedReportFile) {
-      setReportError('Please choose a PDF, CSV, or image file first.');
-      reportFileInputRef.current?.click();
-      return;
-    }
-
-    setIsReportUploading(true);
-    setReportError('');
-    setReportImportResult(null);
-
+  async function handleReportImportSuccess() {
     try {
-      const formData = new FormData();
-      formData.append('file', selectedReportFile);
-      if (profile?.age != null) formData.append('age', String(profile.age));
-      if (profile?.sex === 0 || profile?.sex === 1) formData.append('sex', String(profile.sex));
-
-      const response = await fetch(`${API_URL}/api/extract-medical-records`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const txt = await response.text();
-        throw new Error(`Medical record extraction failed: ${txt}`);
-      }
-
-      const data = await response.json();
-      const saved = saveReportImport(data);
-      setReportImportResult(toReportImportResult(saved) || data);
-      setUploadedReportFileName(data?.filename || selectedReportFile?.name || 'Uploaded file');
-      setShowReportUploadForm(false);
-      setSelectedReportFile(null);
-      setSelectedReportFileName('');
-
       const statusResponse = await fetch(`${API_URL}/forecast/parkinsons/status`);
       if (statusResponse.ok) {
         setForecastStatus(await statusResponse.json());
@@ -233,10 +93,27 @@ export default function DashboardPage() {
         const historyData = await historyResponse.json();
         setHistoryItems(Array.isArray(historyData.items) ? historyData.items : []);
       }
-    } catch (error) {
-      setReportError(error?.message || 'Failed to import report.');
-    } finally {
-      setIsReportUploading(false);
+    } catch {
+      // Non-fatal — import already saved locally
+    }
+  }
+
+  async function handleReportImportRemoved() {
+    setForecastResult(null);
+    setForecastError('');
+    try {
+      const statusResponse = await fetch(`${API_URL}/forecast/parkinsons/status`);
+      if (statusResponse.ok) {
+        setForecastStatus(await statusResponse.json());
+      }
+
+      const historyResponse = await fetch(`${API_URL}/api/history?limit=60&source=audio`);
+      if (historyResponse.ok) {
+        const historyData = await historyResponse.json();
+        setHistoryItems(Array.isArray(historyData.items) ? historyData.items : []);
+      }
+    } catch {
+      setForecastStatus(null);
     }
   }
 
@@ -384,27 +261,6 @@ export default function DashboardPage() {
 
   const dashboardMetrics = (condition?.metricCards || []).map(metricDisplay);
 
-  const calendarCounts = useMemo(() => {
-    const counts = {};
-    historyItems.forEach((item) => {
-      const key = toDayKey(item.timestamp);
-      if (!key) return;
-      counts[key] = (counts[key] || 0) + 1;
-    });
-    return counts;
-  }, [historyItems]);
-
-  const calendarCells = useMemo(() => buildCalendarCells(calendarMonth), [calendarMonth]);
-  const today = new Date();
-  const monthSessionCount = useMemo(() => {
-    return Object.entries(calendarCounts)
-      .filter(([key]) => {
-        const date = new Date(`${key}T00:00:00`);
-        return !Number.isNaN(date.getTime()) && sameMonth(date, calendarMonth);
-      })
-      .reduce((sum, [, value]) => sum + value, 0);
-  }, [calendarCounts, calendarMonth]);
-
   const trendDateLabels = useMemo(() => {
     if (!trendItems.length) return ['Start', 'Mid', 'Today'];
     const first = formatHistoryTimestamp(trendItems[0].timestamp).split(',')[0];
@@ -412,43 +268,6 @@ export default function DashboardPage() {
     const last = formatHistoryTimestamp(trendItems[trendItems.length - 1].timestamp).split(',')[0];
     return [first, mid, last];
   }, [trendItems]);
-
-  const structuredReport = useMemo(() => {
-    if (!reportImportResult?.report) return null;
-    return normalizeStructuredReport(reportImportResult.report);
-  }, [reportImportResult]);
-
-  const hasUploadedReport = Boolean(uploadedReportFileName && reportImportResult);
-
-  function handleChangeReport() {
-    setShowReportUploadForm(true);
-    setSelectedReportFile(null);
-    setSelectedReportFileName('');
-    setReportError('');
-  }
-
-  function handleRemoveReport() {
-    clearReportImport();
-    setReportImportResult(null);
-    setUploadedReportFileName('');
-    setShowReportUploadForm(true);
-    setSelectedReportFile(null);
-    setSelectedReportFileName('');
-    setReportError('');
-  }
-
-  function formatImportedAt(iso) {
-    if (!iso) return null;
-    const date = new Date(iso);
-    if (Number.isNaN(date.getTime())) return null;
-    return new Intl.DateTimeFormat('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(date);
-  }
 
   return (
     <>
@@ -500,299 +319,25 @@ export default function DashboardPage() {
             </div>
             
             <div className="flex flex-col items-center md:items-end gap-2">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowCalendar((prev) => !prev)}
-                  className="p-2.5 text-slate-500 hover:text-primary hover:bg-slate-100 rounded-xl border border-slate-200 bg-white transition-colors"
-                  aria-label="Activity calendar"
-                >
-                  <span className="material-symbols-outlined text-[20px]">calendar_month</span>
-                </button>
-                <Link href="/record">
+              <Link href="/record">
                 <button className="flex items-center justify-center gap-3 bg-gradient-to-r from-primary to-blue-600 text-white px-8 py-5 rounded-[18px] shadow-lg shadow-primary/30 hover:-translate-y-1 hover:shadow-[0_8px_25px_rgba(0,86,187,0.35)] hover:scale-[1.02] transition-all duration-300 ease-out group border border-blue-500/50">
                   <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform shadow-inner">
                     <span className="material-symbols-outlined text-white animate-[pulse_2s_ease-in-out_infinite]" style={{ fontVariationSettings: "'FILL' 1" }}>mic</span>
                   </div>
                   <span className="text-lg font-bold tracking-wide">Record Today's Voice</span>
                 </button>
-                </Link>
-              </div>
+              </Link>
               <span className="text-[13px] font-semibold tracking-wide text-slate-400 mr-2">
                 {condition ? `${condition.recordingSeconds}-sec daily check` : '15-sec daily check'}
               </span>
             </div>
           </section>
 
-          {showCalendar && (
-            <section className="bg-white border border-slate-200 rounded-[18px] p-4 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <button
-                  type="button"
-                  onClick={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}
-                  className="p-1 rounded-lg hover:bg-slate-100"
-                  aria-label="Previous month"
-                >
-                  <span className="material-symbols-outlined text-[18px]">chevron_left</span>
-                </button>
-                <p className="text-sm font-bold text-slate-700">
-                  {new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(calendarMonth)}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}
-                  className="p-1 rounded-lg hover:bg-slate-100"
-                  aria-label="Next month"
-                >
-                  <span className="material-symbols-outlined text-[18px]">chevron_right</span>
-                </button>
-              </div>
-              <div className="text-[11px] font-bold text-slate-400 mb-2 grid grid-cols-7">
-                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
-                  <div key={day} className="text-center py-1">{day}</div>
-                ))}
-              </div>
-              <div className="grid grid-cols-7 gap-1">
-                {calendarCells.map((dateCell, index) => {
-                  if (!dateCell) {
-                    return <div key={`empty-${index}`} className="h-10" />;
-                  }
-                  const key = toDayKey(dateCell.toISOString());
-                  const count = key ? (calendarCounts[key] || 0) : 0;
-                  const isToday = dateCell.toDateString() === today.toDateString();
-                  return (
-                    <div
-                      key={key || index}
-                      className={`h-10 rounded-lg border flex flex-col items-center justify-center text-xs ${isToday ? 'bg-emerald-100 border-emerald-300 text-emerald-800' : count > 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-50 border-slate-100 text-slate-500'}`}
-                    >
-                      <span className="font-semibold leading-none">{dateCell.getDate()}</span>
-                      {count > 0 ? <span className="text-[10px] font-extrabold text-emerald-700">{count}</span> : null}
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="mt-3 text-xs text-slate-700 bg-emerald-50 rounded-lg px-3 py-2 border border-emerald-100">
-                Sessions this month: <span className="font-bold text-emerald-700">{monthSessionCount}</span>
-              </p>
-            </section>
-          )}
-
-          <section className="bg-white border border-slate-200 rounded-[18px] p-6 shadow-sm">
-            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-5">
-              <div>
-                <h3 className="text-xl font-extrabold text-slate-900 font-headline">Import Previous Medical Records</h3>
-                <p className="text-sm text-slate-500 mt-1">Upload JPG, PNG, PDF, or Parkinson history CSV. Extracted rows are saved and included in trends and LSTM history.</p>
-              </div>
-              {hasUploadedReport && !showReportUploadForm ? (
-                <div className="flex flex-wrap gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={handleChangeReport}
-                    className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 transition-colors"
-                  >
-                    Change report
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleRemoveReport}
-                    className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-100 transition-colors"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ) : null}
-            </div>
-
-            {hasUploadedReport && !showReportUploadForm ? (
-              <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50/80 p-4 flex flex-col sm:flex-row sm:items-center gap-4">
-                <div className="flex items-start gap-3 flex-1 min-w-0">
-                  <span className="material-symbols-outlined text-emerald-600 text-3xl shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>description</span>
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Report on file</p>
-                    <p className="text-base font-extrabold text-slate-900 truncate mt-0.5">{uploadedReportFileName}</p>
-                    <p className="text-sm text-emerald-800/90 mt-1">
-                      {reportImportResult.imported_rows ?? 0} days imported
-                      {reportImportResult.lstm_rows_parsed ? ` · ${reportImportResult.lstm_rows_parsed} LSTM sessions` : ''}
-                      {formatImportedAt(reportImportResult.importedAt) ? ` · ${formatImportedAt(reportImportResult.importedAt)}` : ''}
-                    </p>
-                    {reportImportResult.persistence_warning && !reportImportResult.db_persisted ? (
-                      <p className="text-xs text-amber-800 mt-1">Stored locally (cloud DB offline) — forecast still works.</p>
-                    ) : (
-                      <p className="text-xs text-emerald-700 mt-1">Data kept for this session — safe to navigate away.</p>
-                    )}
-                  </div>
-                </div>
-                <span className="inline-flex items-center gap-1 self-start sm:self-center px-3 py-1.5 rounded-full bg-emerald-600 text-white text-xs font-bold uppercase tracking-wider shrink-0">
-                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
-                  Active
-                </span>
-              </div>
-            ) : (
-              <div className="mt-5 flex flex-col sm:flex-row gap-3">
-                <input
-                  ref={reportFileInputRef}
-                  type="file"
-                  accept="image/*,.pdf,.csv"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0] || null;
-                    setSelectedReportFile(file);
-                    setSelectedReportFileName(file?.name || '');
-                    setReportError('');
-                  }}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => reportFileInputRef.current?.click()}
-                  className={`rounded-xl border px-5 py-2.5 font-bold transition-colors max-w-full flex-1 sm:flex-none ${selectedReportFileName ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
-                >
-                  {selectedReportFileName ? (
-                    <span className="block truncate">Selected: {selectedReportFileName}</span>
-                  ) : (
-                    'Choose PDF/CSV/Image'
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleReportUpload()}
-                  disabled={isReportUploading}
-                  className="rounded-xl px-5 py-2.5 bg-primary text-white font-bold disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isReportUploading ? 'Importing…' : 'Import report'}
-                </button>
-                {hasUploadedReport ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowReportUploadForm(false)}
-                    className="rounded-xl border border-slate-300 px-5 py-2.5 font-bold text-slate-600 hover:bg-slate-50"
-                  >
-                    Cancel
-                  </button>
-                ) : null}
-              </div>
-            )}
-
-            {showReportUploadForm && !hasUploadedReport ? (
-              <p className="mt-2 text-xs text-slate-500">
-                {selectedReportFileName ? `Selected file: ${selectedReportFileName}` : 'No file selected yet.'}
-              </p>
-            ) : null}
-
-            {reportError ? (
-              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{reportError}</div>
-            ) : null}
-
-            {reportImportResult ? (
-              <div className="mt-5 space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Patient</p>
-                    <p className="text-sm font-extrabold text-slate-800 mt-1">{structuredReport?.patientName || 'Not found'}</p>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Condition</p>
-                    <p className="text-sm font-extrabold text-slate-800 mt-1">{structuredReport?.disease || 'Not found'}</p>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">LSTM Sessions</p>
-                    <p className="text-sm font-extrabold text-slate-800 mt-1">
-                      {reportImportResult.lstm_rows_parsed ?? 0}
-                      {reportImportResult.persistence_warning && !reportImportResult.db_persisted ? (
-                        <span className="block text-xs font-normal text-amber-700 mt-1">Saved locally (DB offline)</span>
-                      ) : null}
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Rows Imported</p>
-                    <p className="text-sm font-extrabold text-slate-800 mt-1">{reportImportResult.imported_rows ?? 0}</p>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">
-                      {structuredReport?.hasParkinsonBiomarkers ? 'Latest Motor UPDRS' : 'Final Score'}
-                    </p>
-                    <p className="text-sm font-extrabold text-slate-800 mt-1">
-                      {structuredReport?.hasParkinsonBiomarkers
-                        ? (structuredReport.lastMotor != null ? formatBioValue(structuredReport.lastMotor, 2) : 'N/A')
-                        : (structuredReport?.finalScore ?? 'N/A')}
-                      {structuredReport?.hasParkinsonBiomarkers && structuredReport.motorDelta != null ? (
-                        <span className={`ml-1 text-xs font-bold ${structuredReport.motorDelta > 0 ? 'text-red-600' : structuredReport.motorDelta < 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
-                          ({structuredReport.motorDelta > 0 ? '+' : ''}{formatBioValue(structuredReport.motorDelta, 2)} vs day 1)
-                        </span>
-                      ) : structuredReport?.finalStatus ? (
-                        <span className="ml-1 text-xs text-slate-500">({structuredReport.finalStatus})</span>
-                      ) : null}
-                    </p>
-                  </div>
-                </div>
-
-                {reportImportResult.summary ? (
-                  <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm text-slate-700">
-                    <span className="font-bold text-blue-800 mr-1">Summary:</span>{reportImportResult.summary}
-                  </div>
-                ) : null}
-
-                {structuredReport?.rows?.length ? (
-                  <div className="rounded-xl border border-slate-200 overflow-hidden">
-                    <div className="bg-slate-50 border-b border-slate-200 px-4 py-3 text-sm font-bold text-slate-700">
-                      {structuredReport.hasParkinsonBiomarkers
-                        ? `Parkinson voice biomarkers from report (${structuredReport.rows.length} days)`
-                        : `Analysed patient's health history from reports (${structuredReport.rows.length})`}
-                    </div>
-                    <div className="max-h-[340px] overflow-auto">
-                      <table className="w-full text-sm">
-                        <thead className="bg-slate-100 sticky top-0 z-10">
-                          <tr className="text-left text-slate-600">
-                            <th className="px-4 py-3 font-bold">Day</th>
-                            {structuredReport.hasParkinsonBiomarkers ? (
-                              <>
-                                <th className="px-4 py-3 font-bold">Motor UPDRS</th>
-                                <th className="px-4 py-3 font-bold">Jitter (%)</th>
-                                <th className="px-4 py-3 font-bold">Shimmer</th>
-                                <th className="px-4 py-3 font-bold">HNR</th>
-                                <th className="px-4 py-3 font-bold">RPDE</th>
-                                <th className="px-4 py-3 font-bold">PPE</th>
-                              </>
-                            ) : (
-                              <>
-                                <th className="px-4 py-3 font-bold">Breath Score</th>
-                                <th className="px-4 py-3 font-bold">Pause Score</th>
-                                <th className="px-4 py-3 font-bold">Speech Rate</th>
-                                <th className="px-4 py-3 font-bold">Health Score</th>
-                              </>
-                            )}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {structuredReport.rows.map((row) => (
-                            <tr key={`pdf-row-${row.day}`} className="border-t border-slate-100 hover:bg-slate-50/80">
-                              <td className="px-4 py-2 font-semibold text-slate-700">Day {row.day}</td>
-                              {structuredReport.hasParkinsonBiomarkers ? (
-                                <>
-                                  <td className="px-4 py-2 font-bold text-violet-800">{formatBioValue(row.motorUpdrs, 2)}</td>
-                                  <td className="px-4 py-2 font-mono text-slate-700">{formatBioValue(row.jitter, 5)}</td>
-                                  <td className="px-4 py-2 font-mono text-slate-700">{formatBioValue(row.shimmer, 5)}</td>
-                                  <td className="px-4 py-2 font-mono text-slate-700">{formatBioValue(row.hnr, 2)}</td>
-                                  <td className="px-4 py-2 font-mono text-slate-700">{formatBioValue(row.rpde, 4)}</td>
-                                  <td className="px-4 py-2 font-mono text-slate-700">{formatBioValue(row.ppe, 4)}</td>
-                                </>
-                              ) : (
-                                <>
-                                  <td className="px-4 py-2 text-slate-700">{Number.isFinite(row.breathScore) ? row.breathScore : 'N/A'}</td>
-                                  <td className="px-4 py-2 text-slate-700">{Number.isFinite(row.pauseScore) ? row.pauseScore : 'N/A'}</td>
-                                  <td className="px-4 py-2 text-slate-700">{Number.isFinite(row.speechRate) ? row.speechRate : 'N/A'}</td>
-                                  <td className="px-4 py-2 font-bold text-slate-800">{Number.isFinite(row.healthScore) ? row.healthScore : 'N/A'}</td>
-                                </>
-                              )}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </section>
+          <MedicalReportImport
+            variant="dashboard"
+            onImportSuccess={handleReportImportSuccess}
+            onImportRemoved={handleReportImportRemoved}
+          />
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             <div className="lg:col-span-4 bg-surface-container-lowest border border-gray-100 rounded-[18px] p-6 lg:p-8 flex flex-col items-center text-center relative overflow-hidden hover-lift shadow-sm">
@@ -863,10 +408,11 @@ export default function DashboardPage() {
                       Motor UPDRS Progression Forecast
                     </h3>
                     <p className="text-sm text-violet-800/80 mt-2 max-w-xl">
-                      Predicts your future motor UPDRS from your last {lstmSessionsRequired} sessions with complete voice biomarker history.
+                      Predicts tomorrow&apos;s motor UPDRS from your last {lstmSessionsRequired} days of history
+                      (older imported days first, then your newest recordings — e.g. 30-day import + 5 recordings uses the last 5 import days + all 5 recordings).
                     </p>
                     <p className="text-xs font-bold text-violet-700 uppercase tracking-wider mt-3">
-                      {lstmSessionsAvailable}/{lstmSessionsRequired} sessions recorded
+                      {lstmSessionsAvailable}/{lstmSessionsRequired} days of history available
                     </p>
                   </div>
                   <button
@@ -880,8 +426,21 @@ export default function DashboardPage() {
                 </div>
 
                 {!lstmForecastReady && (
-                  <div className="mt-5 rounded-xl border border-violet-200 bg-white/70 p-4 text-sm text-violet-900">
-                    {forecastStatus?.message || `Record or import ${lstmSessionsRequired - lstmSessionsAvailable} more session(s) to unlock forecasting.`}
+                  <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+                    <p className="font-bold flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[18px]">info</span>
+                      At least {lstmSessionsRequired} days of prior data needed
+                    </p>
+                    <p className="mt-2 text-amber-900/90">
+                      {forecastStatus?.message || (
+                        <>
+                          We need {lstmSessionsRequired - lstmSessionsAvailable} more day{lstmSessionsRequired - lstmSessionsAvailable === 1 ? '' : 's'} of voice biomarker history to forecast your next motor UPDRS score.
+                          {' '}Record daily or{' '}
+                          <Link href="/history" className="font-bold text-amber-950 underline underline-offset-2">import a report in History</Link>
+                          {' '}(CSV with 10+ days works).
+                        </>
+                      )}
+                    </p>
                   </div>
                 )}
 
@@ -898,7 +457,7 @@ export default function DashboardPage() {
                       <p className="text-3xl font-black text-violet-800 mt-2">{Number(currentMotorUpdrs).toFixed(1)}</p>
                     </div>
                     <div className="rounded-xl border border-violet-200 bg-white p-5 text-center">
-                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Predicted motor UPDRS</p>
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Predicted tomorrow&apos;s motor UPDRS</p>
                       <p className="text-3xl font-black text-purple-700 mt-2">{Number(forecastResult.predicted_motor_updrs).toFixed(1)}</p>
                     </div>
                     <div className="rounded-xl border border-violet-200 bg-white p-5 text-center">

@@ -1,4 +1,12 @@
 const REPORT_IMPORT_KEY = 'vocalis_report_import';
+const DASHBOARD_IMPORT_DISMISS_KEY = 'vocalis_report_import_dashboard_dismissed';
+export const REPORT_IMPORT_CHANGED = 'vocalis_report_import_changed';
+
+function notifyReportImportChange() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(REPORT_IMPORT_CHANGED));
+  }
+}
 
 /** Trim API payload before localStorage (drop huge extracted_text). */
 function toStoredPayload(data) {
@@ -15,6 +23,22 @@ function toStoredPayload(data) {
     detected_conditions: data.detected_conditions || [],
     source_type: data.source_type || null,
   };
+}
+
+export function isDashboardImportDismissed() {
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem(DASHBOARD_IMPORT_DISMISS_KEY) === '1';
+}
+
+export function dismissDashboardImport() {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(DASHBOARD_IMPORT_DISMISS_KEY, '1');
+  notifyReportImportChange();
+}
+
+export function clearDashboardImportDismiss() {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(DASHBOARD_IMPORT_DISMISS_KEY);
 }
 
 export function getStoredReportImport() {
@@ -35,12 +59,15 @@ export function saveReportImport(apiResponse) {
   const payload = toStoredPayload(apiResponse);
   if (!payload) return null;
   localStorage.setItem(REPORT_IMPORT_KEY, JSON.stringify(payload));
+  clearDashboardImportDismiss();
+  notifyReportImportChange();
   return payload;
 }
 
 export function clearReportImport() {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(REPORT_IMPORT_KEY);
+  notifyReportImportChange();
 }
 
 /** Rehydrate shape expected by dashboard (matches API response subset). */

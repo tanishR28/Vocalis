@@ -92,27 +92,27 @@ severity, speech_score, breathlessness_score, tremor_score
 ```
 
 ```bash
-python datasets/generate.py
-python training/train_parkinsons.py
+python datasets/generate.py          # Depression + Asthma synthetic CSVs only
 python training/train_depression.py
 python training/train_asthma.py
 ```
 
+Parkinson's models use **real** Oxford telemonitoring data — train in Jupyter:
+
+- `notebooks/parkinsons_xgboost.ipynb` → `models/parkinsons_xgb.joblib`
+- `notebooks/parkinsons_lstm.ipynb` → `models/parkinsons_lstm.keras`
+
 ---
 
-## LSTM (Parkinson forecast, optional)
+## LSTM (Parkinson motor UPDRS forecast)
 
-File: `parkinsons_lstm.keras`
+File: `parkinsons_lstm.keras` (trained in `notebooks/parkinsons_lstm.ipynb`)
 
 | Input | Shape | Output |
 |-------|-------|--------|
-| 7 days × 8 features (pitch, jitter, shimmer, speech_rate, severity, speech, tremor, tremor×0.5) | `(1, 7, 8)` | `severity_7d`, `severity_30d`, `deterioration_risk`, `stability_score` |
+| Last 10 days × 19 features (age, sex, Oxford voice biomarkers, motor_UPDRS) | `(1, 10, 19)` | Next `motor_UPDRS` |
 
-```bash
-python training/train_lstm_parkinsons.py
-```
-
-Used only when ≥7 days of history exist (Parkinson's monitoring).
+Requires **at least 10 days** of complete history (daily recordings or CSV/PDF import with 10+ rows).
 
 ---
 

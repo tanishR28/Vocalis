@@ -129,7 +129,7 @@ LSTM_MIN_DAYS = lstm_sequence_length()
 
 def dataset_path(condition_key: str) -> Path:
     mapping = {
-        "parkinsons": DATA_DIR / "parkinsons" / "parkinsons_updated.csv",
+        "parkinsons": DATA_DIR / "parkinsons_real" / "parkinsons_telemonitoring_updrs.csv",
         "depression": DATA_DIR / "depression" / "depression.csv",
         "asthma": DATA_DIR / "asthma" / "asthma.csv",
     }

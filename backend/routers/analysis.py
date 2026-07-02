@@ -17,12 +17,24 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, File, Form, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, File, Form, Query, UploadFile
+from fastapi.responses import JSONResponse, Response
 from supabase import Client, create_client
 
 from config import ML_DIR
-from services.lstm_history import is_complete_lstm_row, save_local_lstm_history, append_local_lstm_row, lstm_sequence_length
+from services.lstm_history import (
+    is_complete_lstm_row,
+    save_local_lstm_history,
+    append_local_lstm_row,
+    lstm_sequence_length,
+    set_active_import,
+    remove_imported_medical_history,
+)
+from services.parkinson_export import (
+    build_parkinson_history_export,
+    render_export_csv,
+    render_export_pdf,
+)
 from models.schemas import AnalysisResponse, ManualAnalysisRequest
 
 router = APIRouter(prefix="/api", tags=["analysis"])
@@ -137,10 +149,6 @@ def _parse_parkinson_history_csv(
                     subject_id = int(parsed["subject#"])
                 except (TypeError, ValueError):
                     pass
-            if patient_age is None and parsed.get("age") is not None:
-                patient_age = int(parsed["age"])
-            if patient_sex is None and parsed.get("sex") is not None:
-                patient_sex = int(parsed["sex"])
 
             lstm_row = _normalize_lstm_import_row(parsed, patient_age, patient_sex)
             if not lstm_row:
@@ -161,6 +169,9 @@ def _parse_parkinson_history_csv(
                     "speech_rate": 0.0,
                     "health_score": max(0, min(100, int(100 - motor * 2.5))),
                     "lstm_row": lstm_row,
+                    "total_UPDRS": parsed.get("total_UPDRS"),
+                    "test_time": parsed.get("test_time"),
+                    "subject#": parsed.get("subject#"),
                 }
             )
 
@@ -327,8 +338,8 @@ def _parse_voiceai_parkinson_report(
         return []
 
     header_age, header_sex, patient_name = _parse_voiceai_report_header(text)
-    age = header_age if header_age is not None else default_age
-    sex = header_sex if header_sex is not None else default_sex
+    age = default_age if default_age is not None else header_age
+    sex = default_sex if default_sex is not None else header_sex
 
     day_pattern = re.compile(
         r"Day\s+(\d+)\s*\n(.*?)(?=\nDay\s+\d+\s*\n|\nHistorical Records|\Z)",
@@ -406,10 +417,14 @@ def _normalize_lstm_import_row(raw: dict[str, Any], default_age: Optional[int], 
         mapped = key_aliases.get(key, key)
         normalized[mapped] = value
 
-    if default_age is not None and "age" not in normalized:
+    if default_age is not None:
         normalized["age"] = default_age
-    if default_sex is not None and "sex" not in normalized:
+    elif "age" not in normalized:
+        pass
+    if default_sex is not None:
         normalized["sex"] = default_sex
+    elif "sex" not in normalized:
+        pass
 
     if not is_complete_lstm_row(normalized):
         return None
@@ -507,8 +522,10 @@ def _persist_document_rows_to_supabase(
         local_saved = save_local_lstm_history(
             lstm_rows,
             user_id,
-            replace=len(lstm_rows) >= lstm_sequence_length(),
+            replace=True,
+            source="imported",
         )
+        set_active_import(filename, len(lstm_rows), user_id)
 
     if supabase is None:
         if local_saved:
@@ -541,11 +558,17 @@ def _persist_document_rows_to_supabase(
         )
 
         raw_features: Dict[str, Any] = {
-                    "source": "imported-medical-record",
-                    "source_type": source_type,
-                    "filename": filename,
-                    "day": row.get("day"),
-                }
+            "source": "imported-medical-record",
+            "source_type": source_type,
+            "filename": filename,
+            "day": row.get("day"),
+        }
+        if row.get("total_UPDRS") is not None:
+            raw_features["total_UPDRS"] = row.get("total_UPDRS")
+        if row.get("test_time") is not None:
+            raw_features["test_time"] = row.get("test_time")
+        if row.get("subject#") is not None:
+            raw_features["subject#"] = row.get("subject#")
         lstm_row = row.get("lstm_row")
         if is_complete_lstm_row(lstm_row):
             raw_features["lstm_row"] = _json_safe(lstm_row)
@@ -1097,6 +1120,72 @@ async def extract_medical_records(
     finally:
         if os.path.exists(temp_file_name):
             os.remove(temp_file_name)
+
+
+@router.delete("/imported-medical-records")
+async def delete_imported_medical_records(
+    filename: Optional[str] = None,
+    user_id: Optional[str] = None,
+):
+    """Remove imported report rows from LSTM history and DB; keep real voice recordings only."""
+    try:
+        result = remove_imported_medical_history(supabase, user_id=user_id, filename=filename)
+        return {
+            "ok": True,
+            "message": "Imported medical history removed. Forecasting now uses only your saved voice recordings.",
+            **result,
+        }
+    except Exception as error:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Could not remove imported history: {str(error) or repr(error)}"},
+        )
+
+
+@router.get("/export-parkinson-history")
+async def export_parkinson_history(
+    format: str = Query("csv", pattern="^(csv|pdf)$"),
+    age: int = Query(..., ge=18, le=100),
+    sex: int = Query(..., ge=0, le=1),
+    subject_id: int = Query(1, ge=1),
+    user_id: Optional[str] = None,
+):
+    """Export up to 30 latest history rows as Oxford CSV or VoiceAI PDF (import + recordings merged)."""
+    try:
+        rows, base_name = build_parkinson_history_export(
+            supabase,
+            age=age,
+            sex=sex,
+            subject_id=subject_id,
+            user_id=user_id,
+        )
+        if not rows:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "No voice biomarker history available to export yet."},
+            )
+
+        if format == "pdf":
+            pdf_bytes = render_export_pdf(rows, subject_id=subject_id, age=age, sex=sex)
+            return Response(
+                content=pdf_bytes,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{base_name}.pdf"'},
+            )
+
+        csv_text = render_export_csv(rows)
+        return Response(
+            content=csv_text,
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{base_name}.csv"'},
+        )
+    except Exception as error:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Could not export history: {str(error) or repr(error)}"},
+        )
 
 
 @router.post("/analyze", response_model=AnalysisResponse)

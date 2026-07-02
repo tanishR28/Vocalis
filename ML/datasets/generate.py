@@ -1,4 +1,8 @@
-"""Generate synthetic training CSVs for Parkinson's, Depression, and Asthma."""
+"""Generate synthetic training CSVs for Depression and Asthma.
+
+Parkinson's uses real Oxford telemonitoring data — train via notebooks/parkinsons_xgboost.ipynb
+and notebooks/parkinsons_lstm.ipynb (not synthetic CSVs).
+"""
 
 import os
 import pandas as pd
@@ -45,22 +49,6 @@ def create_synthetic_data(condition: str, output_path: Path):
         df["breathlessness_score"] = df["breathlessness"] * 100
         df["speech_score"] = (1 - df["disease_score"]) * 80 + 20
 
-    elif condition == "Parkinson’s":
-        df["pitch_variation"] = norm("pitch_std")
-        df["tremor"] = (norm("jitter") + norm("shimmer")).clip(upper=1.0)
-        df["breathlessness"] = (1 - norm("hnr")).clip(upper=0.7)
-        df["pause_patterns"] = norm("avg_pause_len")
-        df["speech_rate_bio"] = norm("speech_rate")
-        lin = (
-            0.25 * df["tremor"] + 0.10 * df["breathlessness"] + 0.20 * df["pause_patterns"]
-            + 0.25 * (1 - df["pitch_variation"]) + 0.20 * (1 - df["speech_rate_bio"])
-        )
-        mult = df["tremor"] * df["breathlessness"] * df["pause_patterns"]
-        df["disease_score"] = 0.75 * lin + 0.25 * mult
-        df["tremor_score"] = df["tremor"] * 100
-        df["breathlessness_score"] = df["breathlessness"] * 100
-        df["speech_score"] = (1 - df["disease_score"]) * 85 + 15
-
     elif condition == "Depression":
         df["speech_rate_bio"] = norm("speech_rate")
         df["pause_patterns"] = norm("avg_pause_len")
@@ -86,7 +74,6 @@ def create_synthetic_data(condition: str, output_path: Path):
 
 def generate_all():
     specs = [
-        ("Parkinson’s", ML_ROOT / "datasets" / "parkinsons" / "parkinsons_updated.csv"),
         ("Depression", ML_ROOT / "datasets" / "depression" / "depression.csv"),
         ("Asthma", ML_ROOT / "datasets" / "asthma" / "asthma.csv"),
     ]

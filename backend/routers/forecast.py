@@ -49,8 +49,8 @@ async def forecast_parkinsons_progression(body: ParkinsonForecastRequest):
                 sessions_available=sessions_available,
                 sessions_required=sessions_required,
                 message=(
-                    f"Need {remaining} more session{'s' if remaining != 1 else ''} "
-                    f"with complete UPDRS history before forecasting."
+                    f"Need {remaining} more day{'s' if remaining != 1 else ''} "
+                    f"of voice biomarker history before forecasting (minimum {sessions_required} days; import CSV/PDF or record daily)."
                 ),
             )
 
@@ -95,8 +95,8 @@ async def forecast_parkinsons_status(user_id: Optional[str] = None):
     if not ready:
         remaining = sessions_required - sessions_available
         message = (
-            f"Need {remaining} more session{'s' if remaining != 1 else ''} "
-            f"with complete UPDRS history before forecasting."
+            f"Need {remaining} more day{'s' if remaining != 1 else ''} "
+            f"of voice biomarker history before forecasting (minimum {sessions_required} days; import CSV/PDF or record daily)."
         )
 
     current = round(float(all_rows[-1]["motor_UPDRS"]), 2) if all_rows else None

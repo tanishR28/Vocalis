@@ -21,3 +21,4 @@ praat-parselmouth==0.4.5
 easyocr==1.7.2
 pypdf==5.1.0
 pillow==11.1.0
+reportlab==4.2.5

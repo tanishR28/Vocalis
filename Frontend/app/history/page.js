@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
+import MedicalReportImport, { HistoryExportPanel } from '../components/MedicalReportImport';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -39,30 +40,23 @@ function HistoryPageContent() {
   const [selectedItem, setSelectedItem] = useState(null);
   const selectedRecordId = searchParams.get('recording');
 
-  useEffect(() => {
-    let active = true;
-
-    async function loadHistory() {
-      try {
-        const response = await fetch(`${API_URL}/api/history?limit=50&source=audio`);
-        if (!response.ok) return;
-        const data = await response.json();
-        if (!active) return;
-        const nextItems = Array.isArray(data.items) ? data.items : [];
-        setItems(nextItems);
-        setSelectedItem((current) => current || null);
-      } catch {
-        if (active) {
-          setItems([]);
-          setSelectedItem(null);
-        }
-      }
+  async function reloadAudioHistory() {
+    try {
+      const response = await fetch(`${API_URL}/api/history?limit=50&source=audio`);
+      if (!response.ok) return;
+      const data = await response.json();
+      setItems(Array.isArray(data.items) ? data.items : []);
+    } catch {
+      setItems([]);
     }
+  }
 
-    loadHistory();
-    return () => {
-      active = false;
-    };
+  async function handleReportImportRemoved() {
+    await reloadAudioHistory();
+  }
+
+  useEffect(() => {
+    reloadAudioHistory();
   }, []);
 
   useEffect(() => {
@@ -79,8 +73,8 @@ function HistoryPageContent() {
   }
 
   return (
-    <div className="p-6 md:p-8 max-w-6xl mx-auto w-full">
-        <header className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-8">
+    <div className="p-6 md:p-8 max-w-6xl mx-auto w-full space-y-6">
+        <header className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
           <div>
             <p className="text-on-surface-variant font-label">Real saved audio analyses from Supabase</p>
           </div>
@@ -89,6 +83,10 @@ function HistoryPageContent() {
             <span className="text-sm font-semibold">{items.length} saved records</span>
           </div>
         </header>
+
+        <MedicalReportImport variant="history" onImportRemoved={handleReportImportRemoved} />
+
+        <HistoryExportPanel />
 
         <section className="w-full bg-white rounded-xxl shadow-sm border border-slate-100 p-6 md:p-8">
           <div className="flex items-center justify-between gap-4 mb-6">
@@ -114,7 +112,7 @@ function HistoryPageContent() {
                       key={item.id}
                       href={recordHref}
                       onClick={() => setSelectedItem(item)}
-                      className={`w-full block text-left group flex items-center justify-between gap-4 p-5 rounded-2xl border transition-all cursor-pointer ${isSelected ? 'border-primary bg-blue-50/60 shadow-sm' : 'border-slate-100 bg-white hover:border-slate-200 hover:shadow-sm'}`}
+                      className={`w-full text-left group flex items-center justify-between gap-4 p-5 rounded-2xl border transition-all cursor-pointer ${isSelected ? 'border-primary bg-blue-50/60 shadow-sm' : 'border-slate-100 bg-white hover:border-slate-200 hover:shadow-sm'}`}
                     >
                       <div className="flex items-center gap-4 min-w-0">
                         <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${tone.badge}`}>
