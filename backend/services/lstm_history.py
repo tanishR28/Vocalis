@@ -344,6 +344,168 @@ def remove_imported_medical_history(
     return {"local_import_rows_removed": local_removed, "db_records_removed": db_removed}
 
 
+def _motor_to_severity(motor_updrs: float) -> float:
+    lo, hi = 8.0, 40.0
+    return max(0.0, min(100.0, (float(motor_updrs) - lo) / (hi - lo) * 100.0))
+
+
+def _prediction_label(severity: float) -> str:
+    if severity > 70:
+        return "YES"
+    if severity > 45:
+        return "MONITOR"
+    return "NO"
+
+
+def _health_category_from_score(score: float) -> str:
+    if score >= 80:
+        return "Stable"
+    if score >= 60:
+        return "Normal"
+    if score >= 40:
+        return "Moderate"
+    return "Warning"
+
+
+def _lstm_row_to_history_item(
+    lstm: Dict[str, Any],
+    *,
+    index: int,
+    total: int,
+    item_source: str,
+    filename: Optional[str] = None,
+) -> Dict[str, Any]:
+    from datetime import datetime, timedelta
+
+    motor = float(lstm["motor_UPDRS"])
+    severity = _motor_to_severity(motor)
+    health_score = max(0, min(100, int(100 - motor * 2.5)))
+    category = _health_category_from_score(health_score)
+    prediction = _prediction_label(severity)
+    jitter = float(lstm.get("Jitter(%)", 0.0) or 0.0)
+    shimmer = float(lstm.get("Shimmer", 0.0) or 0.0)
+    hnr = float(lstm.get("HNR", 20.0) or 20.0)
+    tremor_score = min(100.0, jitter * 10.0 + shimmer * 50.0)
+    confidence = max(0.7, min(0.95, 0.95 - abs(motor - 25.0) / 100.0))
+    recorded_at = (datetime.utcnow() - timedelta(days=(total - index - 1))).isoformat()
+    day_num = index + 1
+    is_import = item_source == IMPORT_SOURCE
+    title = (
+        f"Imported Day {day_num} ({filename or 'report'})"
+        if is_import
+        else f"Voice recording day {day_num}"
+    )
+    breath_score = max(0.0, min(1.0, (100.0 - hnr * 2.5) / 100.0))
+    speech_rate_val = max(0.0, min(5.0, (100.0 - severity * 0.85) / 20.0))
+    pause_ratio = max(0.0, min(1.0, 1.0 - speech_rate_val / 5.0))
+    clinical_insights = {
+        "voice_tremor": {
+            "score": tremor_score,
+            "raw_value": jitter,
+            "jitter": jitter,
+            "shimmer": shimmer,
+        },
+        "breathlessness": {
+            "score": breath_score * 100,
+            "raw_value": breath_score,
+            "hnr": hnr,
+        },
+        "pitch_variation": {
+            "score": float(lstm.get("PPE", 0) or 0) * 100,
+            "raw_value": float(lstm.get("PPE", 0) or 0),
+        },
+        "speech_rate": {
+            "score": speech_rate_val * 20,
+            "raw_value": speech_rate_val,
+        },
+        "pause_patterns": {
+            "score": pause_ratio * 100,
+            "raw_value": pause_ratio,
+            "pause_count": int(round(pause_ratio * 10)),
+            "pause_duration_avg": pause_ratio,
+        },
+        "insight_source": "derived_from_import" if is_import else "derived_from_lstm_row",
+        "used_by_ml_models": False,
+    }
+
+    return {
+        "id": f"local-{item_source}-{index}",
+        "title": title,
+        "timestamp": recorded_at,
+        "health_score": {"score": float(health_score), "category": category},
+        "recording": {
+            "id": f"local-{item_source}-{index}",
+            "duration": 0.0,
+            "status": "analyzed",
+            "recorded_at": recorded_at,
+        },
+        "biomarkers": {
+            "tremor_score": tremor_score,
+            "breathlessness_score": breath_score,
+            "speech_rate": speech_rate_val,
+            "jitter": jitter,
+            "shimmer": shimmer,
+            "hnr": hnr,
+            "health_score": float(health_score),
+            "health_category": category,
+            "confidence": confidence,
+            "is_anomaly": health_score < 45,
+            "raw_features": {
+                "source": item_source,
+                "filename": filename,
+                "day": day_num,
+                "lstm_row": lstm,
+                "motor_updrs": motor,
+                "severity": severity,
+                "prediction": prediction,
+                "status": prediction,
+                "clinical_insights": clinical_insights,
+            },
+            "analyzed_at": recorded_at,
+        },
+        "source": item_source,
+    }
+
+
+def fetch_local_history_items(
+    user_id: Optional[str] = None,
+    limit: int = 60,
+    source: str = "all",
+) -> List[Dict[str, Any]]:
+    """Build dashboard/history items from local LSTM store when Supabase is empty."""
+    store = _load_local_store()
+    bucket = store.get(_local_key(user_id)) or _empty_bucket()
+    import_meta = _load_import_state().get(_local_key(user_id), {})
+    filename = import_meta.get("filename")
+
+    chronological: List[Tuple[str, Dict[str, Any]]] = []
+    if source in ("all", "imported"):
+        for row in bucket.get("imported") or []:
+            if is_complete_lstm_row(row):
+                chronological.append((IMPORT_SOURCE, dict(row)))
+    if source in ("all", "audio"):
+        for row in bucket.get("recorded") or []:
+            if is_complete_lstm_row(row):
+                chronological.append((RECORDING_SOURCE, dict(row)))
+
+    if not chronological:
+        return []
+
+    total = len(chronological)
+    items = [
+        _lstm_row_to_history_item(
+            lstm,
+            index=index,
+            total=total,
+            item_source=item_source,
+            filename=filename if item_source == IMPORT_SOURCE else None,
+        )
+        for index, (item_source, lstm) in enumerate(chronological)
+    ]
+    items.reverse()
+    return items[: max(1, min(limit, 100))]
+
+
 def compute_forecast_trend(delta: float) -> str:
     if delta > 1:
         return "Worsening"

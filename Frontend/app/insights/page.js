@@ -1,69 +1,68 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import HealthScoreAreaChart from '../components/HealthScoreAreaChart';
 import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
-  Legend,
-  PieChart,
-  Pie,
-  Cell,
-  ScatterChart,
-  Scatter,
-} from 'recharts';
+  CLINICAL_COLORS,
+  ClinicalAveragesChart,
+  ClinicalRadarChart,
+  ClinicalTrendChart,
+  DiagnosticPieChart,
+  HnrScatterChart,
+  JitterShimmerChart,
+  MotorUpdrsChart,
+  PitchProfileChart,
+  SeverityBarChart,
+  SpeechPauseChart,
+} from '../components/insights/InsightsCharts';
+import {
+  CLINICAL_INSIGHT_CATALOG,
+  formatInsightValue,
+  insightLevel,
+} from '../../lib/clinicalInsights';
+import { getDiagnosticStatusPresentation } from '../../lib/diagnosticStyling';
+import {
+  TIME_RANGES,
+  averageField,
+  buildClinicalAverageBars,
+  buildDiagnosticPieData,
+  buildInsightsTimeline,
+  buildRadarData,
+  buildSeverityBuckets,
+  hasAcousticData,
+  latestTimelineRow,
+} from '../../lib/insightsData';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const MIN_TREND_SESSIONS = 3;
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function avg(values) {
-  if (!values.length) return 0;
-  return values.reduce((s, v) => s + v, 0) / values.length;
-}
-
-function mapHistoryToChart(items) {
-  return [...items].reverse().map((item, index) => {
-    const biomarkers = item.biomarkers || {};
-    const signals = biomarkers.raw_features?.signals || {};
-
-    return {
-      sample: `S${index + 1}`,
-      pitch_mean: Number(biomarkers.pitch_mean ?? signals.pitch_mean ?? 0),
-      pitch_std: Number(biomarkers.pitch_variation ?? signals.pitch_std ?? 0),
-      jitter: Number(biomarkers.jitter ?? signals.jitter ?? 0),
-      shimmer: Number(biomarkers.shimmer ?? signals.shimmer ?? 0),
-      hnr: Number(biomarkers.hnr ?? signals.hnr ?? 0),
-      speech_rate: Number(biomarkers.speech_rate ?? signals.speech_rate ?? 0),
-      pause_count: Number(biomarkers.pause_count ?? signals.pause_count ?? 0),
-      avg_pause: Number(biomarkers.pause_duration_avg ?? signals.avg_pause_len ?? 0),
-      health_score: Number(item.health_score?.score ?? biomarkers.health_score ?? 0),
-      status: item.health_score?.category || 'unknown',
-    };
-  });
+function EmptySection({ title, message, actionHref, actionLabel }) {
+  return (
+    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/80 p-6 text-center">
+      <p className="font-semibold text-slate-700">{title}</p>
+      <p className="text-sm text-slate-500 mt-2">{message}</p>
+      {actionHref ? (
+        <Link href={actionHref} className="inline-block mt-3 text-sm font-bold text-primary hover:underline">
+          {actionLabel}
+        </Link>
+      ) : null}
+    </div>
+  );
 }
 
 export default function InsightsPage() {
   const [historyItems, setHistoryItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [rangeKey, setRangeKey] = useState('30d');
+  const trendRefs = useRef({});
 
   useEffect(() => {
     let active = true;
 
     async function loadHistory() {
       try {
-        const response = await fetch(`${API_URL}/api/history?limit=50&source=audio`);
+        const response = await fetch(`${API_URL}/api/history?limit=200`);
         if (!response.ok) return;
         const data = await response.json();
         if (active) {
@@ -82,213 +81,273 @@ export default function InsightsPage() {
     };
   }, []);
 
-  const chartData = useMemo(() => {
-    const rows = mapHistoryToChart(historyItems);
-    return rows.map((row, index, arr) => {
-      const start = Math.max(0, index - 2);
-      const movingWindow = arr.slice(start, index + 1).map((item) => item.health_score);
-      return {
-        ...row,
-        health_score_avg3: Number(avg(movingWindow).toFixed(2)),
-      };
-    });
-  }, [historyItems]);
+  const timeline = useMemo(
+    () => buildInsightsTimeline(historyItems, rangeKey),
+    [historyItems, rangeKey],
+  );
 
-  const biomarkerAverages = useMemo(() => {
-    return [
-      { metric: 'Pitch Mean', avg: Number(avg(chartData.map((d) => d.pitch_mean)).toFixed(2)) },
-      { metric: 'Pitch Std', avg: Number(avg(chartData.map((d) => d.pitch_std)).toFixed(2)) },
-      { metric: 'Jitter', avg: Number(avg(chartData.map((d) => d.jitter)).toFixed(5)) },
-      { metric: 'Shimmer', avg: Number(avg(chartData.map((d) => d.shimmer)).toFixed(5)) },
-      { metric: 'HNR', avg: Number(avg(chartData.map((d) => d.hnr)).toFixed(2)) },
-      { metric: 'Speech', avg: Number(avg(chartData.map((d) => d.speech_rate)).toFixed(2)) },
-      { metric: 'Pause Cnt', avg: Number(avg(chartData.map((d) => d.pause_count)).toFixed(2)) },
-      { metric: 'Avg Pause', avg: Number(avg(chartData.map((d) => d.avg_pause)).toFixed(3)) },
-    ];
-  }, [chartData]);
+  const latestRow = latestTimelineRow(timeline);
+  const radarData = useMemo(() => buildRadarData(latestRow), [latestRow]);
+  const diagnosticPie = useMemo(() => buildDiagnosticPieData(timeline), [timeline]);
+  const severityBuckets = useMemo(() => buildSeverityBuckets(timeline), [timeline]);
+  const clinicalAverages = useMemo(() => buildClinicalAverageBars(timeline), [timeline]);
+  const acousticAvailable = hasAcousticData(timeline);
+  const hasTrendSessions = timeline.length >= MIN_TREND_SESSIONS;
+  const motorTimeline = timeline.filter((r) => r.motor_updrs != null);
 
-  const statusPieData = useMemo(() => {
-    let low = 0;
-    let medium = 0;
-    let high = 0;
+  const diagnosticStyle = getDiagnosticStatusPresentation(
+    latestRow?.prediction,
+    latestRow?.severity,
+  );
 
-    chartData.forEach((row) => {
-      if (row.health_score >= 75) low += 1;
-      else if (row.health_score >= 60) medium += 1;
-      else high += 1;
-    });
+  const avgHealth = Number(averageField(timeline, 'health_score').toFixed(1));
+  const latestMotorUpdrs = latestRow?.motor_updrs;
 
-    return [
-      { name: 'Low Risk', value: low, color: '#10b981' },
-      { name: 'Medium Risk', value: medium, color: '#f59e0b' },
-      { name: 'High Risk', value: high, color: '#ef4444' },
-    ];
-  }, [chartData]);
+  const averagesChartData = useMemo(
+    () => [
+      ...clinicalAverages,
+      { metric: 'HNR', id: 'hnr', avg: Number(averageField(timeline, 'hnr').toFixed(2)) },
+    ],
+    [clinicalAverages, timeline],
+  );
 
-  const summary = useMemo(() => {
-    return {
-      samples: chartData.length,
-      avgScore: Number(avg(chartData.map((d) => d.health_score)).toFixed(1)),
-      avgJitter: Number(avg(chartData.map((d) => d.jitter)).toFixed(5)),
-      avgShimmer: Number(avg(chartData.map((d) => d.shimmer)).toFixed(5)),
-    };
-  }, [chartData]);
+  function scrollToMetric(metricId) {
+    trendRefs.current[metricId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 
   return (
     <div className="p-6 md:p-8 max-w-7xl mx-auto w-full space-y-6">
-        <header>
-          <p className="text-slate-600">Biomarker trends from your saved voice assessments.</p>
-        </header>
+      <header className="space-y-2">
+        <h1 className="text-3xl font-extrabold text-slate-900 font-headline">Insights</h1>
+        <p className="text-slate-600 max-w-3xl">
+          Deep analytics from voice assessments and imports. Clinical biomarkers are stored for
+          reference — LSTM and XGBoost use separate Oxford voice features only.
+        </p>
+      </header>
 
-        {!loading && chartData.length === 0 ? (
-          <section className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-600">
-            <p className="font-medium">No voice assessments yet.</p>
-            <p className="text-sm mt-2">Record a sample first, then return here for trend charts.</p>
-            <Link href="/record" className="inline-block mt-4 text-blue-700 font-bold hover:underline">
-              Go to Record
-            </Link>
-          </section>
-        ) : null}
+      <div className="flex flex-wrap gap-2">
+        {Object.entries(TIME_RANGES).map(([key, range]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setRangeKey(key)}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              rangeKey === key
+                ? 'bg-primary text-white shadow-sm'
+                : 'bg-slate-100 text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            {range.label}
+          </button>
+        ))}
+      </div>
 
-        {chartData.length > 0 ? (
+      {loading ? (
+        <div className="text-slate-500 text-sm">Loading session history…</div>
+      ) : null}
+
+      {!loading && timeline.length === 0 ? (
+        <EmptySection
+          title="No voice assessments yet"
+          message="Record a sample or import a medical report to unlock trend charts."
+          actionHref="/record"
+          actionLabel="Go to Record"
+        />
+      ) : null}
+
+      {timeline.length > 0 ? (
         <>
-        <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white rounded-2xl border border-slate-200 p-4">
-            <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Samples</p>
-            <p className="text-3xl font-extrabold text-slate-900 mt-1">{summary.samples}</p>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200 p-4">
-            <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Avg Health Score</p>
-            <p className="text-3xl font-extrabold text-slate-900 mt-1">{summary.avgScore}</p>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200 p-4">
-            <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Avg Jitter</p>
-            <p className="text-3xl font-extrabold text-slate-900 mt-1">{summary.avgJitter}</p>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200 p-4">
-            <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Avg Shimmer</p>
-            <p className="text-3xl font-extrabold text-slate-900 mt-1">{summary.avgShimmer}</p>
-          </div>
-        </section>
-
-        <section className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-          <div className="xl:col-span-8 bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">Health Score Trend (Raw vs Avg-3)</h3>
-            <div style={{ height: 320 }}>
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="sample" tick={{ fontSize: 12, fill: '#64748b' }} />
-                  <YAxis domain={[30, 100]} tick={{ fontSize: 12, fill: '#64748b' }} />
-                  <Tooltip />
-                  <Legend />
-                  <Line type="monotone" dataKey="health_score" stroke="#2563eb" strokeWidth={3} dot={false} name="Health Score" />
-                  <Line type="monotone" dataKey="health_score_avg3" stroke="#16a34a" strokeWidth={3} dot={false} name="Avg-3" />
-                </LineChart>
-              </ResponsiveContainer>
+          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white rounded-2xl border border-slate-200 p-4">
+              <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Total sessions</p>
+              <p className="text-3xl font-extrabold text-slate-900 mt-1">{timeline.length}</p>
             </div>
-          </div>
-
-          <div className="xl:col-span-4 bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">Risk Distribution</h3>
-            <div style={{ height: 320 }}>
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie data={statusPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label>
-                    {statusPieData.map((entry) => (
-                      <Cell key={entry.name} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
+            <div className="bg-white rounded-2xl border border-slate-200 p-4">
+              <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Avg health score</p>
+              <p className="text-3xl font-extrabold text-slate-900 mt-1">{avgHealth}</p>
             </div>
-          </div>
-
-          <div className="xl:col-span-6 bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">Pitch Profile</h3>
-            <div style={{ height: 320 }}>
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="sample" tick={{ fontSize: 12, fill: '#64748b' }} />
-                  <YAxis tick={{ fontSize: 12, fill: '#64748b' }} />
-                  <Tooltip />
-                  <Legend />
-                  <Line type="monotone" dataKey="pitch_mean" stroke="#0ea5e9" strokeWidth={3} dot={false} name="Pitch Mean" />
-                  <Line type="monotone" dataKey="pitch_std" stroke="#f97316" strokeWidth={3} dot={false} name="Pitch Std" />
-                </LineChart>
-              </ResponsiveContainer>
+            <div className="bg-white rounded-2xl border border-slate-200 p-4">
+              <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Latest diagnostic</p>
+              <p className={`text-2xl font-extrabold mt-1 ${diagnosticStyle.textClass || 'text-slate-900'}`}>
+                {latestRow?.prediction || '—'}
+              </p>
             </div>
-          </div>
-
-          <div className="xl:col-span-6 bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">Jitter and Shimmer</h3>
-            <div style={{ height: 320 }}>
-              <ResponsiveContainer width="100%" height={300}>
-                <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="sample" tick={{ fontSize: 12, fill: '#64748b' }} />
-                  <YAxis tick={{ fontSize: 12, fill: '#64748b' }} />
-                  <Tooltip />
-                  <Legend />
-                  <Area type="monotone" dataKey="jitter" stroke="#ef4444" fill="#fecaca" name="Jitter" />
-                  <Area type="monotone" dataKey="shimmer" stroke="#a855f7" fill="#e9d5ff" name="Shimmer" />
-                </AreaChart>
-              </ResponsiveContainer>
+            <div className="bg-white rounded-2xl border border-slate-200 p-4">
+              <p className="text-xs uppercase tracking-widest text-slate-500 font-bold">Latest motor UPDRS</p>
+              <p className="text-3xl font-extrabold text-violet-800 mt-1">
+                {latestMotorUpdrs != null ? Number(latestMotorUpdrs).toFixed(1) : '—'}
+              </p>
             </div>
-          </div>
+          </section>
 
-          <div className="xl:col-span-7 bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">Speech and Pause Dynamics</h3>
-            <div style={{ height: 320 }}>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="sample" tick={{ fontSize: 12, fill: '#64748b' }} />
-                  <YAxis tick={{ fontSize: 12, fill: '#64748b' }} />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="speech_rate" fill="#22c55e" name="Speech Rate" radius={[5, 5, 0, 0]} />
-                  <Bar dataKey="pause_count" fill="#f59e0b" name="Pause Count" radius={[5, 5, 0, 0]} />
-                  <Bar dataKey="avg_pause" fill="#64748b" name="Avg Pause" radius={[5, 5, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+          <section className="bg-white rounded-2xl border border-slate-200 p-6">
+            <h3 className="text-lg font-bold text-slate-900 mb-1">Health stability over time</h3>
+            <p className="text-sm text-slate-500 mb-4">
+              Composite health score (0–100) with 3-session moving average
+            </p>
+            {!hasTrendSessions ? (
+              <EmptySection
+                title="Need 3+ sessions for trends"
+                message={`You have ${timeline.length} session${timeline.length === 1 ? '' : 's'} in this range. Add more to see the trend line.`}
+              />
+            ) : (
+              <HealthScoreAreaChart data={timeline} showMovingAverage height={320} />
+            )}
+          </section>
 
-          <div className="xl:col-span-5 bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">HNR vs Health Score</h3>
-            <div style={{ height: 320 }}>
-              <ResponsiveContainer width="100%" height={300}>
-                <ScatterChart margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis type="number" dataKey="hnr" name="HNR" tick={{ fontSize: 12, fill: '#64748b' }} />
-                  <YAxis type="number" dataKey="health_score" name="Health Score" tick={{ fontSize: 12, fill: '#64748b' }} />
-                  <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                  <Scatter data={chartData} fill="#2563eb" />
-                </ScatterChart>
-              </ResponsiveContainer>
+          <section className="bg-white rounded-2xl border border-slate-200 p-6 space-y-6">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900 mb-1">Clinical voice biomarkers</h3>
+              <p className="text-sm text-slate-500">
+                Acoustic analysis (librosa) — not used as LSTM/XGBoost model inputs.
+              </p>
             </div>
-          </div>
 
-          <div className="xl:col-span-12 bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">Biomarker Averages</h3>
-            <div style={{ height: 320 }}>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={biomarkerAverages} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="metric" tick={{ fontSize: 12, fill: '#64748b' }} />
-                  <YAxis tick={{ fontSize: 12, fill: '#64748b' }} />
-                  <Tooltip />
-                  <Bar dataKey="avg" fill="#0ea5e9" name="Average Value" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+              {CLINICAL_INSIGHT_CATALOG.map((def) => {
+                const insight = latestRow?.[`${def.id}_raw`];
+                return (
+                  <button
+                    key={def.id}
+                    type="button"
+                    onClick={() => scrollToMetric(def.id)}
+                    className="rounded-xl border border-slate-100 bg-slate-50/80 p-4 text-left hover:border-primary/30 hover:bg-blue-50/40 transition-colors"
+                  >
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-primary">{def.number}</p>
+                    <p className="text-sm font-bold text-slate-900 mt-1">{def.name}</p>
+                    <p className="text-2xl font-black text-slate-900 mt-2">
+                      {insight ? formatInsightValue(def.id, insight) : '—'}
+                    </p>
+                    <p className="text-xs font-semibold text-slate-600 mt-1">
+                      {insight ? insightLevel(def.id, insight) : 'No data'} · latest
+                    </p>
+                  </button>
+                );
+              })}
             </div>
-          </div>
-        </section>
+
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+              <div className="xl:col-span-4 bg-slate-50/50 rounded-xl border border-slate-100 p-5">
+                <h4 className="text-sm font-bold text-slate-900 mb-4">Latest snapshot (radar)</h4>
+                {radarData.length < 3 ? (
+                  <EmptySection
+                    title="Insufficient clinical data"
+                    message="Record a voice sample to populate the 5 clinical biomarkers."
+                    actionHref="/record"
+                    actionLabel="Record voice"
+                  />
+                ) : (
+                  <ClinicalRadarChart data={radarData} />
+                )}
+              </div>
+
+              <div className="xl:col-span-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {CLINICAL_INSIGHT_CATALOG.map((def, index) => (
+                  <div
+                    key={def.id}
+                    ref={(el) => { trendRefs.current[def.id] = el; }}
+                    className="rounded-xl border border-slate-100 p-4"
+                  >
+                    <p className="text-xs font-bold text-slate-700 mb-2">{def.name}</p>
+                    {!hasTrendSessions ? (
+                      <p className="text-xs text-slate-400 py-8 text-center">Need 3+ sessions</p>
+                    ) : (
+                      <ClinicalTrendChart
+                        data={timeline}
+                        metricId={def.id}
+                        name={def.name}
+                        color={CLINICAL_COLORS[index % CLINICAL_COLORS.length]}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Acoustic detail</h3>
+              <p className="text-sm text-slate-500">Raw signal features for clinicians and power users.</p>
+            </div>
+            {!acousticAvailable ? (
+              <EmptySection
+                title="No acoustic biomarkers yet"
+                message="Record at least one voice sample to populate jitter, shimmer, pitch, and pause metrics."
+                actionHref="/record"
+                actionLabel="Record voice"
+              />
+            ) : (
+              <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+                <div className="xl:col-span-6 bg-white rounded-2xl border border-slate-200 p-5">
+                  <h4 className="text-sm font-bold text-slate-900 mb-4">Jitter &amp; Shimmer</h4>
+                  <JitterShimmerChart data={timeline} />
+                </div>
+                <div className="xl:col-span-6 bg-white rounded-2xl border border-slate-200 p-5">
+                  <h4 className="text-sm font-bold text-slate-900 mb-4">Pitch profile</h4>
+                  <PitchProfileChart data={timeline} />
+                </div>
+                <div className="xl:col-span-7 bg-white rounded-2xl border border-slate-200 p-5">
+                  <h4 className="text-sm font-bold text-slate-900 mb-4">Speech &amp; pause dynamics</h4>
+                  <SpeechPauseChart data={timeline} />
+                </div>
+                <div className="xl:col-span-5 bg-white rounded-2xl border border-slate-200 p-5">
+                  <h4 className="text-sm font-bold text-slate-900 mb-4">HNR vs health score</h4>
+                  <HnrScatterChart data={timeline} />
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className="space-y-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Model outputs (XGBoost / LSTM)</h3>
+              <p className="text-sm text-slate-500">
+                Separate from clinical acoustic scores — derived from Oxford voice features.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+              <div className="xl:col-span-5 bg-white rounded-2xl border border-slate-200 p-5">
+                <h4 className="text-sm font-bold text-slate-900 mb-4">Motor UPDRS trend</h4>
+                {motorTimeline.length === 0 ? (
+                  <EmptySection
+                    title="No motor UPDRS data"
+                    message="Import a Parkinson's report or record sessions with UPDRS estimates."
+                  />
+                ) : (
+                  <MotorUpdrsChart data={motorTimeline} />
+                )}
+              </div>
+              <div className="xl:col-span-3 bg-white rounded-2xl border border-slate-200 p-5">
+                <h4 className="text-sm font-bold text-slate-900 mb-4">Diagnostic status mix</h4>
+                {diagnosticPie.length === 0 ? (
+                  <EmptySection title="No predictions yet" message="Sessions need ML diagnostic labels." />
+                ) : (
+                  <DiagnosticPieChart data={diagnosticPie} />
+                )}
+              </div>
+              <div className="xl:col-span-4 bg-white rounded-2xl border border-slate-200 p-5">
+                <h4 className="text-sm font-bold text-slate-900 mb-4">Severity distribution</h4>
+                {severityBuckets.every((b) => b.count === 0) ? (
+                  <EmptySection title="No severity data" message="Import or record sessions with severity scores." />
+                ) : (
+                  <SeverityBarChart data={severityBuckets} />
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="bg-white rounded-2xl border border-slate-200 p-6">
+            <h3 className="text-lg font-bold text-slate-900 mb-1">Clinical averages + HNR</h3>
+            <p className="text-sm text-slate-500 mb-4">Mean scores across the selected time range.</p>
+            {!hasTrendSessions ? (
+              <EmptySection title="Need 3+ sessions" message="Expand your time range or add more sessions." />
+            ) : (
+              <ClinicalAveragesChart data={averagesChartData} />
+            )}
+          </section>
         </>
-        ) : null}
+      ) : null}
     </div>
   );
 }

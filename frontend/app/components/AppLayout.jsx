@@ -18,7 +18,7 @@ export default function AppLayout({ children }) {
     return children;
   }
 
-  const title = TITLES[pathname] || 'Vocalis Health';
+  const title = TITLES[pathname] || 'Vocalis';
 
   return <AppShell title={title}>{children}</AppShell>;
 }

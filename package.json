@@ -1,0 +1,6 @@
+{
+  "name": "vocalis",
+  "devDependencies": {
+    "shadcn": "^4.12.0"
+  }
+}

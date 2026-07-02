@@ -1,4 +1,11 @@
 const PROFILE_KEY = 'vocalis_patient_profile';
+export const PROFILE_CHANGED = 'vocalis_profile_changed';
+
+function notifyProfileChange() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(PROFILE_CHANGED));
+  }
+}
 
 export function getProfile() {
   if (typeof window === 'undefined') return null;
@@ -36,6 +43,7 @@ export function saveProfile({ conditionId, patientName, age, sex }) {
   if (normalizedAge !== null) profile.age = normalizedAge;
   if (normalizedSex !== null) profile.sex = normalizedSex;
   localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  notifyProfileChange();
   return profile;
 }
 
@@ -58,6 +66,7 @@ export function updateProfile(updates) {
     else delete profile.sex;
   }
   localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  notifyProfileChange();
   return profile;
 }
 

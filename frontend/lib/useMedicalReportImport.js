@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { getProfile } from './profile';
+import { getProfile, updateProfile } from './profile';
 import {
   clearReportImport,
   getStoredReportImport,
@@ -21,6 +21,8 @@ export function useMedicalReportImport({ onImportSuccess, onImportRemoved } = {}
   const [reportImportResult, setReportImportResult] = useState(null);
   const [reportError, setReportError] = useState('');
   const [showReportUploadForm, setShowReportUploadForm] = useState(false);
+  const [demographicsPreview, setDemographicsPreview] = useState(null);
+  const [showDemographicsModal, setShowDemographicsModal] = useState(false);
   const reportFileInputRef = useRef(null);
 
   useEffect(() => {
@@ -49,35 +51,53 @@ export function useMedicalReportImport({ onImportSuccess, onImportRemoved } = {}
 
   const hasUploadedReport = Boolean(uploadedReportFileName && reportImportResult);
 
-  async function handleReportUpload() {
-    if (!selectedReportFile) {
-      setReportError('Please choose a PDF, CSV, or image file first.');
-      reportFileInputRef.current?.click();
-      return;
+  async function previewReportDemographics(file, profile) {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (profile?.age != null) formData.append('age', String(profile.age));
+    if (profile?.sex === 0 || profile?.sex === 1) formData.append('sex', String(profile.sex));
+
+    const response = await fetch(`${API_URL}/api/preview-medical-records`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const txt = await response.text();
+      throw new Error(`Could not preview report demographics: ${txt}`);
     }
 
-    const profile = getProfile();
+    return response.json();
+  }
+
+  async function uploadReportWithDemographics(file, age, sex) {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (age != null) formData.append('age', String(age));
+    if (sex === 0 || sex === 1) formData.append('sex', String(sex));
+
+    const response = await fetch(`${API_URL}/api/extract-medical-records`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const txt = await response.text();
+      throw new Error(`Medical record extraction failed: ${txt}`);
+    }
+
+    return response.json();
+  }
+
+  async function runImport(age, sex) {
+    if (!selectedReportFile) return;
+
     setIsReportUploading(true);
     setReportError('');
     setReportImportResult(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', selectedReportFile);
-      if (profile?.age != null) formData.append('age', String(profile.age));
-      if (profile?.sex === 0 || profile?.sex === 1) formData.append('sex', String(profile.sex));
-
-      const response = await fetch(`${API_URL}/api/extract-medical-records`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const txt = await response.text();
-        throw new Error(`Medical record extraction failed: ${txt}`);
-      }
-
-      const data = await response.json();
+      const data = await uploadReportWithDemographics(selectedReportFile, age, sex);
       const saved = saveReportImport(data);
       setReportImportResult(toReportImportResult(saved) || data);
       setUploadedReportFileName(data?.filename || selectedReportFile?.name || 'Uploaded file');
@@ -92,7 +112,56 @@ export function useMedicalReportImport({ onImportSuccess, onImportRemoved } = {}
       setReportError(error?.message || 'Failed to import report.');
     } finally {
       setIsReportUploading(false);
+      setShowDemographicsModal(false);
+      setDemographicsPreview(null);
     }
+  }
+
+  async function handleReportUpload() {
+    if (!selectedReportFile) {
+      setReportError('Please choose a PDF, CSV, or image file first.');
+      reportFileInputRef.current?.click();
+      return;
+    }
+
+    const profile = getProfile();
+    setReportError('');
+
+    try {
+      const preview = await previewReportDemographics(selectedReportFile, profile);
+      const useAge = preview.profile_age ?? profile?.age ?? null;
+      const useSex = preview.profile_sex ?? profile?.sex;
+
+      if (preview.conflict) {
+        setDemographicsPreview(preview);
+        setShowDemographicsModal(true);
+        return;
+      }
+
+      await runImport(useAge, useSex);
+    } catch (error) {
+      setReportError(error?.message || 'Failed to import report.');
+    }
+  }
+
+  function confirmDemographicsFromProfile() {
+    if (!demographicsPreview) return;
+    runImport(demographicsPreview.profile_age, demographicsPreview.profile_sex);
+  }
+
+  function confirmDemographicsFromReport() {
+    if (!demographicsPreview) return;
+    const { report_age, report_sex } = demographicsPreview;
+    updateProfile({
+      age: report_age ?? undefined,
+      sex: report_sex === 0 || report_sex === 1 ? report_sex : undefined,
+    });
+    runImport(report_age, report_sex);
+  }
+
+  function cancelDemographicsModal() {
+    setShowDemographicsModal(false);
+    setDemographicsPreview(null);
   }
 
   function handleChangeReport() {
@@ -151,5 +220,10 @@ export function useMedicalReportImport({ onImportSuccess, onImportRemoved } = {}
     setSelectedReportFileName,
     setReportError,
     setShowReportUploadForm,
+    showDemographicsModal,
+    demographicsPreview,
+    confirmDemographicsFromProfile,
+    confirmDemographicsFromReport,
+    cancelDemographicsModal,
   };
 }

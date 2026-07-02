@@ -3,8 +3,8 @@ import OnboardingGate from './components/OnboardingGate';
 import AppLayout from './components/AppLayout';
 
 export const metadata = {
-  title: 'Vocalis Health Dashboard',
-  description: 'AI Health Assessment Dashboard',
+  title: 'Vocalis',
+  description: 'AI-powered voice biomarker monitoring',
 };
 
 export default function RootLayout({ children }) {

@@ -4,6 +4,12 @@ import { useRouter } from 'next/navigation';
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { getCondition } from '../../lib/conditions';
 import { getProfile } from '../../lib/profile';
+import {
+  explainDiagnosticStatus,
+  getDiagnosticStatusPresentation,
+  getHealthScorePresentation,
+  getSeverityPresentation,
+} from '../../lib/diagnosticStyling';
 import RecordingInstructions from '../components/RecordingInstructions';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -593,28 +599,42 @@ export default function RecordPage() {
       {analysisResult && (
               <div className="mt-12 bg-white p-8 rounded-2xl shadow-2xl w-full animate-in fade-in slide-in-from-bottom border border-blue-100 z-20">
                 <h3 className="text-2xl font-black text-blue-900 mb-8 border-b border-slate-100 pb-4">Clinical Biomarker Analysis</h3>
-                
+                {(() => {
+                  const healthStyle = getHealthScorePresentation(analysisResult.health_score);
+                  const severityStyle = getSeverityPresentation(analysisResult.severity, analysisResult.stage);
+                  const statusStyle = getDiagnosticStatusPresentation(analysisResult.status, analysisResult.severity);
+                  const statusHelp = explainDiagnosticStatus(analysisResult.status);
+                  return (
                 <div className="flex flex-col md:flex-row gap-8">
                   {/* Left Side: Core Scores */}
                   <div className="w-full md:w-1/3 flex flex-col gap-6">
-                    <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 rounded-2xl py-8 px-4 border border-blue-100 flex-1 flex flex-col justify-center items-center shadow-inner">
-                      <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-3">Composite Health Score</p>
-                      <p className="text-6xl font-black text-blue-600 drop-shadow-sm">{analysisResult.health_score}<span className="text-2xl text-blue-300 font-bold">/100</span></p>
+                    <div className={`rounded-2xl py-8 px-4 border flex-1 flex flex-col justify-center items-center shadow-inner ${healthStyle.cardClass}`}>
+                      <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">Composite Health Score</p>
+                      <p className={`text-xs font-bold uppercase tracking-wider mb-3 ${healthStyle.textClass}`}>{healthStyle.label}</p>
+                      <p className={`text-6xl font-black drop-shadow-sm ${healthStyle.textClass}`}>{analysisResult.health_score}<span className="text-2xl opacity-60 font-bold">/100</span></p>
                     </div>
-                    <div className="bg-gradient-to-br from-purple-50 to-purple-100/50 rounded-2xl py-6 px-4 border border-purple-100 flex flex-col justify-center items-center shadow-inner gap-2">
+                    <div className={`rounded-2xl py-6 px-4 border flex flex-col justify-center items-center shadow-inner gap-2 ${severityStyle.cardClass}`}>
                       <p className="text-sm font-bold text-slate-500 uppercase tracking-widest">Severity & Stage</p>
-                      <p className="text-4xl font-black text-purple-700">{Math.round(analysisResult.severity ?? 0)}<span className="text-lg text-purple-400">/100</span></p>
-                      <p className="text-lg font-bold text-purple-600">{analysisResult.stage || '—'}</p>
+                      <p className={`text-4xl font-black ${severityStyle.textClass}`}>{Math.round(analysisResult.severity ?? 0)}<span className="text-lg opacity-60">/100</span></p>
+                      <p className={`text-lg font-bold ${severityStyle.stageClass}`}>{analysisResult.stage || '—'}</p>
+                      <span className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${severityStyle.cardClass} border ${severityStyle.stageClass}`}>
+                        {severityStyle.label} band
+                      </span>
                       <p className="text-xs text-slate-500">Confidence {(Number(analysisResult.confidence || 0) * 100).toFixed(0)}%</p>
                       {analysisResult.motor_updrs != null && (
-                        <p className="text-xs font-semibold text-purple-600 mt-1">
+                        <p className={`text-xs font-semibold mt-1 ${severityStyle.textClass}`}>
                           Motor UPDRS: {Number(analysisResult.motor_updrs).toFixed(1)}
                         </p>
                       )}
                     </div>
-                    <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 rounded-2xl py-6 px-4 border border-emerald-100 flex flex-col justify-center items-center shadow-inner gap-2">
-                      <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-2">Diagnostic Status</p>
-                      <p className="text-2xl font-bold text-emerald-700 tracking-tight text-center">{analysisResult.status}</p>
+                    <div className={`rounded-2xl py-6 px-4 border flex flex-col justify-center items-center shadow-inner gap-2 ${statusStyle.cardClass}`}>
+                      <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">Diagnostic Status</p>
+                      <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${statusStyle.badgeClass}`}>
+                        <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>{statusStyle.icon}</span>
+                        {statusStyle.subtitle || analysisResult.status}
+                      </span>
+                      <p className={`text-2xl font-bold tracking-tight text-center mt-2 ${statusStyle.textClass}`}>{statusStyle.title}</p>
+                      <p className="text-xs text-slate-600 text-center leading-relaxed px-2">{statusHelp}</p>
                       {condition?.id === 'asthma' && (analysisResult.cough_detected || analysisResult.wheeze_detected) && (
                         <div className="flex flex-wrap gap-2 justify-center mt-1">
                           {analysisResult.cough_detected && (
@@ -676,6 +696,8 @@ export default function RecordPage() {
                     </div>
                   </div>
                 </div>
+                  );
+                })()}
               </div>
       )}
 

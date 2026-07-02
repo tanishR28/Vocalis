@@ -6,6 +6,7 @@ import { formatBioValue, formatImportedAt } from '../../lib/reportDisplay';
 import { useMedicalReportImport } from '../../lib/useMedicalReportImport';
 import { getProfile, hasParkinsonDemographics } from '../../lib/profile';
 import { downloadParkinsonHistoryExport } from '../../lib/exportHistory';
+import DemographicsConflictModal from './DemographicsConflictModal';
 import {
   dismissDashboardImport,
   isDashboardImportDismissed,
@@ -449,7 +450,22 @@ export default function MedicalReportImport({ variant = 'dashboard', onImportSuc
     setSelectedReportFileName,
     setReportError,
     setShowReportUploadForm,
+    showDemographicsModal,
+    demographicsPreview,
+    confirmDemographicsFromProfile,
+    confirmDemographicsFromReport,
+    cancelDemographicsModal,
   } = useMedicalReportImport({ onImportSuccess, onImportRemoved });
+
+  const demographicsModal = (
+    <DemographicsConflictModal
+      open={showDemographicsModal}
+      preview={demographicsPreview}
+      onUseProfile={confirmDemographicsFromProfile}
+      onUseReport={confirmDemographicsFromReport}
+      onCancel={cancelDemographicsModal}
+    />
+  );
 
   const onChooseFile = (event) => {
     const file = event.target.files?.[0] || null;
@@ -471,7 +487,9 @@ export default function MedicalReportImport({ variant = 'dashboard', onImportSuc
 
   if (variant === 'dashboard' && hasUploadedReport && !showReportUploadForm) {
     return (
-      <section className="bg-white border border-slate-200 rounded-[18px] p-5 shadow-sm">
+      <>
+        {demographicsModal}
+        <section className="bg-white border border-slate-200 rounded-[18px] p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-base font-extrabold text-slate-900 font-headline">Medical records</h3>
           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold uppercase tracking-wider">
@@ -484,12 +502,15 @@ export default function MedicalReportImport({ variant = 'dashboard', onImportSuc
           reportImportResult={reportImportResult}
         />
       </section>
+      </>
     );
   }
 
   if (variant === 'history' && hasUploadedReport) {
     return (
-      <HistoryReportDetail
+      <>
+        {demographicsModal}
+        <HistoryReportDetail
         reportImportResult={reportImportResult}
         structuredReport={structuredReport}
         uploadedReportFileName={uploadedReportFileName}
@@ -505,12 +526,15 @@ export default function MedicalReportImport({ variant = 'dashboard', onImportSuc
         onUpload={handleReportUpload}
         onCancel={onCancel}
       />
+      </>
     );
   }
 
   if (variant === 'history' && !hasUploadedReport && historyCollapsed) {
     return (
-      <section className="bg-white border border-slate-200 rounded-[18px] p-4 shadow-sm">
+      <>
+        {demographicsModal}
+        <section className="bg-white border border-slate-200 rounded-[18px] p-4 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <p className="text-sm text-slate-600">
             Import a previous medical report (PDF/CSV) for Parkinson progression forecasting.
@@ -524,11 +548,14 @@ export default function MedicalReportImport({ variant = 'dashboard', onImportSuc
           </button>
         </div>
       </section>
+      </>
     );
   }
 
   return (
-    <section className={`bg-white border border-slate-200 rounded-[18px] p-6 shadow-sm ${variant === 'history' ? '' : ''}`}>
+    <>
+      {demographicsModal}
+      <section className={`bg-white border border-slate-200 rounded-[18px] p-6 shadow-sm ${variant === 'history' ? '' : ''}`}>
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div>
           <h3 className="text-xl font-extrabold text-slate-900 font-headline">Import Previous Medical Records</h3>
@@ -562,5 +589,6 @@ export default function MedicalReportImport({ variant = 'dashboard', onImportSuc
         showDismiss={variant === 'dashboard' && !hasUploadedReport}
       />
     </section>
+    </>
   );
 }

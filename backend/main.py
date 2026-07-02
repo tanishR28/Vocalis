@@ -1,5 +1,5 @@
 """
-Voice Biomarker Disease Tracking - FastAPI Backend
+Vocalis — FastAPI Backend
 Main application entry point with CORS middleware and routing.
 """
 
@@ -17,7 +17,7 @@ from routers.analysis import router as analysis_router
 from routers.forecast import router as forecast_router
 
 app = FastAPI(
-    title="Voice Biomarker API",
+    title="Vocalis API",
     description="AI-powered vocal biomarker analysis for disease tracking. "
                 "Analyzes voice recordings to extract tremor, breathlessness, pitch, "
                 "speech rate, pause patterns, and other clinically-relevant biomarkers.",
@@ -42,7 +42,7 @@ app.include_router(forecast_router)
 @app.get("/")
 async def root():
     return {
-        "message": "Voice Biomarker Disease Tracking API",
+        "message": "Vocalis API",
         "docs": "/docs",
         "version": "1.0.0",
     }

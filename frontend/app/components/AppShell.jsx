@@ -82,7 +82,7 @@ function SidebarBrand({ collapsed, onToggle, showToggle = true }) {
       </div>
       {!collapsed && (
         <div className="min-w-0 flex-1">
-          <p className="font-headline text-lg font-extrabold tracking-tight text-primary truncate">Vocalis Health</p>
+          <p className="font-headline text-lg font-extrabold tracking-tight text-primary truncate">Vocalis</p>
           <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Clinical Grade</p>
         </div>
       )}
@@ -180,7 +180,7 @@ export default function AppShell({ children, title, headerActions }) {
     router.push('/onboarding');
   }
 
-  const pageTitle = title || 'Vocalis Health';
+  const pageTitle = title || 'Vocalis';
 
   return (
     <div className="min-h-screen bg-background">

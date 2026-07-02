@@ -67,7 +67,7 @@ story = []
 
 story.append(
     Paragraph(
-        "VoiceAI Parkinson's Disease Monitoring Report",
+        "Vocalis Parkinson's Disease Monitoring Report",
         title_style
     )
 )

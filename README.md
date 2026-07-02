@@ -1,6 +1,6 @@
-# VocalHealth AI — Voice Biomarker Disease Tracking
+# Vocalis — Voice Biomarker Disease Tracking
 
-An AI-powered **Voice Diary** application that enables patients to record daily voice samples and automatically analyze vocal biomarkers to track disease progression between clinical visits.
+An AI-powered **voice diary** application that enables patients to record daily voice samples and automatically analyze vocal biomarkers to track disease progression between clinical visits.
 
 ## Architecture
 
@@ -104,7 +104,7 @@ NOTIFY pgrst, 'reload schema';
 ## Project structure
 
 ```
-VoiceAi/
+Vocalis/
 ├── frontend/
 │   ├── app/
 │   │   ├── page.js              # Main dashboard

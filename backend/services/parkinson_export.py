@@ -1,4 +1,4 @@
-"""Export Parkinson history as Oxford telemonitoring CSV / VoiceAI PDF."""
+"""Export Parkinson history as Oxford telemonitoring CSV / Vocalis PDF."""
 
 from __future__ import annotations
 
@@ -249,7 +249,7 @@ def render_export_pdf(
     story: List[Any] = []
     gender = "Female" if int(sex) == 0 else "Male"
 
-    story.append(Paragraph("VoiceAI Parkinson's Disease Monitoring Report", title_style))
+    story.append(Paragraph("Vocalis Parkinson's Disease Monitoring Report", title_style))
     story.append(Spacer(1, 20))
     story.append(Paragraph("<b>Patient Information</b>", heading))
     story.append(Paragraph(f"<b>Patient ID :</b> P{int(subject_id):03d}", normal))

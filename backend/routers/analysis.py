@@ -29,6 +29,14 @@ from services.lstm_history import (
     lstm_sequence_length,
     set_active_import,
     remove_imported_medical_history,
+    fetch_local_history_items,
+    is_import_active,
+)
+from services.clinical_history import (
+    build_clinical_insights,
+    save_clinical_session,
+    fetch_clinical_history_items,
+    merge_local_history_items,
 )
 from services.parkinson_export import (
     build_parkinson_history_export,
@@ -263,7 +271,7 @@ def _health_category_from_score(score: float) -> str:
     return "Warning"
 
 
-VOICEAI_PDF_FIELD_MAP = {
+VOCALIS_PDF_FIELD_MAP = {
     "motor updrs": "motor_UPDRS",
     "jitter (%)": "Jitter(%)",
     "jitter abs": "Jitter(Abs)",
@@ -284,7 +292,7 @@ VOICEAI_PDF_FIELD_MAP = {
 }
 
 
-def _parse_voiceai_report_header(text: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+def _parse_vocalis_report_header(text: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
     age_match = re.search(r"Age\s*:\s*([\d.]+)", text, flags=re.IGNORECASE)
     gender_match = re.search(r"Gender\s*:\s*(Male|Female)", text, flags=re.IGNORECASE)
     patient_id_match = re.search(r"Patient\s+ID\s*:\s*(\S+)", text, flags=re.IGNORECASE)
@@ -304,7 +312,47 @@ def _parse_voiceai_report_header(text: str) -> Tuple[Optional[int], Optional[int
     return age, sex, patient_name
 
 
-def _parse_voiceai_day_block(day_text: str) -> dict[str, Any]:
+def _extract_report_demographics(
+    file_path: str,
+    filename: str,
+    content_type: Optional[str],
+) -> Tuple[Optional[int], Optional[int]]:
+    """Read age/sex embedded in an import file (CSV header row or Vocalis PDF)."""
+    lower_name = (filename or "").lower()
+    if lower_name.endswith(".csv") or content_type in ("text/csv", "application/csv", "application/vnd.ms-excel"):
+        with open(file_path, newline="", encoding="utf-8-sig") as handle:
+            reader = csv.DictReader(handle)
+            for raw_row in reader:
+                parsed: dict[str, Any] = {}
+                for key, value in (raw_row or {}).items():
+                    if not key:
+                        continue
+                    col = key.strip()
+                    coerced = _coerce_csv_value(col, value or "")
+                    if coerced is not None:
+                        parsed[col] = coerced
+                age = parsed.get("age")
+                sex = parsed.get("sex")
+                try:
+                    age_val = int(age) if age is not None else None
+                except (TypeError, ValueError):
+                    age_val = None
+                try:
+                    sex_val = int(sex) if sex is not None else None
+                except (TypeError, ValueError):
+                    sex_val = None
+                if age_val is not None or sex_val is not None:
+                    return age_val, sex_val
+        return None, None
+
+    extracted_text, _ = _extract_text_from_document(file_path, filename, content_type)
+    if extracted_text:
+        header_age, header_sex, _ = _parse_vocalis_report_header(extracted_text)
+        return header_age, header_sex
+    return None, None
+
+
+def _parse_vocalis_day_block(day_text: str) -> dict[str, Any]:
     raw: dict[str, Any] = {}
     for line in day_text.splitlines():
         line = line.strip()
@@ -314,7 +362,7 @@ def _parse_voiceai_day_block(day_text: str) -> dict[str, Any]:
             continue
         label, value = line.split(":", 1)
         key = re.sub(r"\s+", " ", label.strip().lower())
-        mapped = VOICEAI_PDF_FIELD_MAP.get(key)
+        mapped = VOCALIS_PDF_FIELD_MAP.get(key)
         if not mapped:
             continue
         value = value.strip()
@@ -325,19 +373,22 @@ def _parse_voiceai_day_block(day_text: str) -> dict[str, Any]:
     return raw
 
 
-def _parse_voiceai_parkinson_report(
+def _parse_vocalis_parkinson_report(
     text: str,
     default_age: Optional[int] = None,
     default_sex: Optional[int] = None,
 ) -> list[dict[str, Any]]:
     """
-    Parse VoiceAI Parkinson PDF reports (Day N + labeled biomarker fields).
+    Parse Vocalis Parkinson PDF reports (Day N + labeled biomarker fields).
+    Also accepts legacy VoiceAI-branded exports for backward compatibility.
     Returns import rows with lstm_row when all 19 LSTM features are present.
     """
-    if "VoiceAI Parkinson" not in text and "Motor UPDRS" not in text:
+    is_vocalis_report = "Vocalis Parkinson" in text or "Vocalis Parkinson's" in text
+    is_legacy_report = "VoiceAI Parkinson" in text
+    if not is_vocalis_report and not is_legacy_report and "Motor UPDRS" not in text:
         return []
 
-    header_age, header_sex, patient_name = _parse_voiceai_report_header(text)
+    header_age, header_sex, patient_name = _parse_vocalis_report_header(text)
     age = default_age if default_age is not None else header_age
     sex = default_sex if default_sex is not None else header_sex
 
@@ -350,7 +401,7 @@ def _parse_voiceai_parkinson_report(
     for match in day_pattern.finditer(text):
         day_num = int(match.group(1))
         block = match.group(2)
-        raw = _parse_voiceai_day_block(block)
+        raw = _parse_vocalis_day_block(block)
         if age is not None:
             raw["age"] = age
         if sex is not None:
@@ -466,10 +517,10 @@ def _parse_document_report_rows(text: str, default_age: Optional[int] = None, de
     rows.sort(key=lambda item: item["day"])
 
     patient_name = patient_name_match.group(1).strip() if patient_name_match else None
-    voiceai_rows = _parse_voiceai_parkinson_report(source_text, default_age=default_age, default_sex=default_sex)
-    if voiceai_rows:
-        rows = voiceai_rows
-        patient_name = voiceai_rows[0].get("patient_name") or patient_name
+    vocalis_rows = _parse_vocalis_parkinson_report(source_text, default_age=default_age, default_sex=default_sex)
+    if vocalis_rows:
+        rows = vocalis_rows
+        patient_name = vocalis_rows[0].get("patient_name") or patient_name
     else:
         lstm_json = _parse_lstm_json_rows(source_text)
         if lstm_json:
@@ -751,10 +802,25 @@ def _persist_analysis_to_supabase(
     if is_complete_lstm_row(report.get("lstm_row")):
         append_local_lstm_row(report["lstm_row"], user_id)
 
+    biomarkers = report.get("biomarkers", {}) or {}
+    scores = _biomarker_values(biomarkers, signals)
+    clinical_insights = build_clinical_insights(biomarkers, signals, scores, report)
+    save_clinical_session(
+        user_id=user_id,
+        recording_id=recording_id,
+        disease=disease,
+        duration=duration,
+        analyzed_at_iso=analyzed_at_iso,
+        health_score=float(health_score),
+        health_category=str(report.get("risk_level", "Unknown")),
+        report=report,
+        signals=_json_safe(signals) if isinstance(signals, dict) else signals,
+        scores=scores,
+        clinical_insights=clinical_insights,
+    )
+
     if supabase is None:
-        if is_complete_lstm_row(report.get("lstm_row")):
-            return True, None
-        return False, _supabase_unavailable_error()
+        return True, None
 
     try:
         recording_payload = {
@@ -767,8 +833,6 @@ def _persist_analysis_to_supabase(
         }
         supabase.table("recordings").insert(recording_payload).execute()
 
-        biomarkers = report.get("biomarkers", {}) or {}
-        scores = _biomarker_values(biomarkers, signals)
         biomarker_payload = {
             "recording_id": recording_id,
             "user_id": user_id,
@@ -801,6 +865,7 @@ def _persist_analysis_to_supabase(
                 "motor_updrs": float(report.get("motor_updrs")) if report.get("motor_updrs") is not None else None,
                 "lstm_row": _json_safe(report.get("lstm_row")),
                 "model_source": report.get("model_source"),
+                "clinical_insights": _json_safe(clinical_insights),
             },
             "health_trend": report.get("health_trend", "stable"),
             "analyzed_at": analyzed_at_iso,
@@ -970,73 +1035,145 @@ def _finalize_analysis(
 @router.get("/history")
 async def get_history(limit: int = 20, user_id: Optional[str] = None, source: str = "all"):
     """Return recent analyzed recordings with linked biomarker rows."""
-    if supabase is None:
-        return {"items": []}
+    items: list[dict[str, Any]] = []
+    fetch_limit = max(1, min(limit, 100))
 
+    if supabase is not None:
+        try:
+            recording_query = (
+                supabase.table("recordings")
+                .select("id,user_id,duration,recorded_at,status,notes,created_at")
+                .order("recorded_at", desc=True)
+                .limit(fetch_limit)
+            )
+            if user_id:
+                recording_query = recording_query.eq("user_id", user_id)
+
+            recording_response = recording_query.execute()
+            recordings = recording_response.data or []
+
+            if recordings:
+                recording_ids = [recording.get("id") for recording in recordings if recording.get("id")]
+                biomarker_map: Dict[str, Dict[str, Any]] = {}
+
+                if recording_ids:
+                    biomarker_response = (
+                        supabase.table("biomarkers")
+                        .select(
+                            "id,recording_id,user_id,tremor_score,breathlessness_score,pitch_mean,pitch_variation,speech_rate,pause_count,pause_duration_avg,energy_mean,spectral_centroid_mean,hnr,jitter,shimmer,health_score,health_category,health_trend,confidence,is_anomaly,raw_features,analyzed_at"
+                        )
+                        .in_("recording_id", recording_ids)
+                        .execute()
+                    )
+                    for biomarker in biomarker_response.data or []:
+                        recording_key = biomarker.get("recording_id")
+                        if recording_key:
+                            biomarker_map[recording_key] = biomarker
+
+                for recording in recordings:
+                    biomarker = biomarker_map.get(recording.get("id"), {})
+                    score = float(biomarker.get("health_score") or 0)
+                    category = biomarker.get("health_category") or recording.get("status") or "Unknown"
+                    raw_features = biomarker.get("raw_features") or {}
+                    item_source = raw_features.get("source") or "audio-analysis"
+
+                    if source == "audio" and item_source != "audio-analysis":
+                        continue
+                    if source == "imported" and item_source == "audio-analysis":
+                        continue
+
+                    items.append(
+                        {
+                            "id": recording.get("id"),
+                            "title": recording.get("notes") or category or "Voice Assessment",
+                            "timestamp": biomarker.get("analyzed_at") or recording.get("recorded_at") or recording.get("created_at"),
+                            "health_score": {
+                                "score": score,
+                                "category": category,
+                            },
+                            "recording": recording,
+                            "biomarkers": biomarker,
+                            "source": item_source,
+                        }
+                    )
+        except Exception as error:
+            traceback.print_exc()
+            items = []
+
+    local_items: list[dict[str, Any]] = []
     try:
-        recording_query = (
-            supabase.table("recordings")
-            .select("id,user_id,duration,recorded_at,status,notes,created_at")
-            .order("recorded_at", desc=True)
-            .limit(max(1, min(limit, 100)))
+        lstm_items = fetch_local_history_items(user_id=user_id, limit=fetch_limit, source=source)
+        clinical_items = fetch_clinical_history_items(user_id=user_id, limit=fetch_limit)
+        local_items = merge_local_history_items(
+            lstm_items,
+            clinical_items,
+            source=source,
+            limit=fetch_limit,
         )
-        if user_id:
-            recording_query = recording_query.eq("user_id", user_id)
-
-        recording_response = recording_query.execute()
-        recordings = recording_response.data or []
-        if not recordings:
-            return {"items": []}
-
-        recording_ids = [recording.get("id") for recording in recordings if recording.get("id")]
-        biomarker_map: Dict[str, Dict[str, Any]] = {}
-
-        if recording_ids:
-            biomarker_response = (
-                supabase.table("biomarkers")
-                .select(
-                    "id,recording_id,user_id,tremor_score,breathlessness_score,pitch_mean,pitch_variation,speech_rate,pause_count,pause_duration_avg,energy_mean,spectral_centroid_mean,hnr,jitter,shimmer,health_score,health_category,health_trend,confidence,is_anomaly,raw_features,analyzed_at"
-                )
-                .in_("recording_id", recording_ids)
-                .execute()
-            )
-            for biomarker in biomarker_response.data or []:
-                recording_key = biomarker.get("recording_id")
-                if recording_key:
-                    biomarker_map[recording_key] = biomarker
-
-        items = []
-        for recording in recordings:
-            biomarker = biomarker_map.get(recording.get("id"), {})
-            score = float(biomarker.get("health_score") or 0)
-            category = biomarker.get("health_category") or recording.get("status") or "Unknown"
-            raw_features = biomarker.get("raw_features") or {}
-            item_source = raw_features.get("source") or "audio-analysis"
-
-            if source == "audio" and item_source != "audio-analysis":
-                continue
-            if source == "imported" and item_source == "audio-analysis":
-                continue
-
-            items.append(
-                {
-                    "id": recording.get("id"),
-                    "title": recording.get("notes") or category or "Voice Assessment",
-                    "timestamp": biomarker.get("analyzed_at") or recording.get("recorded_at") or recording.get("created_at"),
-                    "health_score": {
-                        "score": score,
-                        "category": category,
-                    },
-                    "recording": recording,
-                    "biomarkers": biomarker,
-                    "source": item_source,
-                }
-            )
-
-        return {"items": items}
     except Exception as error:
         traceback.print_exc()
-        return JSONResponse(status_code=500, content={"error": str(error) or repr(error)})
+        local_items = []
+
+    if not items:
+        items = local_items
+    elif (
+        source == "all"
+        and is_import_active(user_id)
+        and len(local_items) > len(items)
+    ):
+        # Supabase may be offline or missing imported rows — prefer fuller local timeline.
+        items = local_items
+
+    return {"items": items}
+
+
+@router.post("/preview-medical-records")
+async def preview_medical_records(
+    file: UploadFile = File(...),
+    age: Optional[str] = Form(None),
+    sex: Optional[str] = Form(None),
+):
+    """Detect age/sex in an import file vs profile settings before committing import."""
+    temp_file_name = _save_upload_to_tempfile(file)
+    try:
+        try:
+            profile_age = int(age) if age is not None and str(age).strip() != "" else None
+        except (TypeError, ValueError):
+            profile_age = None
+        try:
+            profile_sex = int(sex) if sex is not None and str(sex).strip() != "" else None
+        except (TypeError, ValueError):
+            profile_sex = None
+
+        report_age, report_sex = _extract_report_demographics(
+            temp_file_name,
+            file.filename or "",
+            file.content_type,
+        )
+
+        conflict = False
+        if profile_age is not None and report_age is not None and profile_age != report_age:
+            conflict = True
+        if profile_sex is not None and report_sex is not None and profile_sex != report_sex:
+            conflict = True
+
+        return {
+            "profile_age": profile_age,
+            "profile_sex": profile_sex,
+            "report_age": report_age,
+            "report_sex": report_sex,
+            "conflict": conflict,
+            "has_report_demographics": report_age is not None or report_sex is not None,
+        }
+    except Exception as error:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Could not preview report demographics: {str(error) or repr(error)}"},
+        )
+    finally:
+        if os.path.exists(temp_file_name):
+            os.remove(temp_file_name)
 
 
 @router.post("/extract-medical-records")
@@ -1151,7 +1288,7 @@ async def export_parkinson_history(
     subject_id: int = Query(1, ge=1),
     user_id: Optional[str] = None,
 ):
-    """Export up to 30 latest history rows as Oxford CSV or VoiceAI PDF (import + recordings merged)."""
+    """Export up to 30 latest history rows as Oxford CSV or Vocalis PDF (import + recordings merged)."""
     try:
         rows, base_name = build_parkinson_history_export(
             supabase,
@@ -1284,7 +1421,7 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "service": "Voice Biomarker Analysis API",
+        "service": "Vocalis Analysis API",
         "version": "1.0.0",
     }
 

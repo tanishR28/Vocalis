@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getCondition, getConditionList } from '@/lib/conditions';
-import { getProfile, updateProfile } from '@/lib/profile';
+import { getProfile, updateProfile, PROFILE_CHANGED } from '@/lib/profile';
 import { Button } from '@/components/ui/button';
 
 export default function SettingsPage() {
@@ -17,12 +17,20 @@ export default function SettingsPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const profile = getProfile();
-    if (!profile) return;
-    setPatientName(profile.patientName || '');
-    setConditionId(profile.conditionId || '');
-    if (profile.age) setAge(String(profile.age));
-    if (profile.sex === 0 || profile.sex === 1) setSex(String(profile.sex));
+    function hydrateFromProfile() {
+      const profile = getProfile();
+      if (!profile) return;
+      setPatientName(profile.patientName || '');
+      setConditionId(profile.conditionId || '');
+      if (profile.age) setAge(String(profile.age));
+      else setAge('');
+      if (profile.sex === 0 || profile.sex === 1) setSex(String(profile.sex));
+      else setSex('');
+    }
+
+    hydrateFromProfile();
+    window.addEventListener(PROFILE_CHANGED, hydrateFromProfile);
+    return () => window.removeEventListener(PROFILE_CHANGED, hydrateFromProfile);
   }, []);
 
   const selected = getCondition(conditionId);

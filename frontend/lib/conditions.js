@@ -18,6 +18,13 @@ export const CONDITIONS = {
       { id: 'jitter', label: 'Jitter & Shimmer', icon: 'vibration', field: 'jitter', combine: 'shimmer', invert: true },
       { id: 'speech', label: 'Speech Steadiness', icon: 'record_voice_over', field: 'speech_rate', invert: false },
     ],
+    dashboardClinicalCards: [
+      { id: 'voice_tremor', label: 'Voice Tremors', icon: 'graphic_eq' },
+      { id: 'breathlessness', label: 'Breathlessness', icon: 'air' },
+      { id: 'pitch_variation', label: 'Pitch Variation', icon: 'tune' },
+      { id: 'speech_rate', label: 'Speech Rate', icon: 'speed' },
+      { id: 'pause_patterns', label: 'Pause Patterns', icon: 'pause' },
+    ],
     resultBars: [
       { label: 'Signature Detected', key: 'signature_detected', max: 1 },
       { label: 'Tremor', key: 'tremor_score', max: 1 },
