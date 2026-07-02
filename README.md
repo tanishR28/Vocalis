@@ -32,6 +32,18 @@ supabase_schema.sql PostgreSQL schema
 - **History** — timeline of voice analyses (`/history`)
 - **Medical record import** — optional PDF/image import for demo datasets
 
+## Deployment (production)
+
+See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the full interview-demo setup:
+
+| Layer | Host |
+|-------|------|
+| Frontend | Vercel (`frontend/`) |
+| API + ML | Hugging Face Docker Space (16 GB RAM free tier) |
+| Database + Auth | Supabase (Google OAuth) |
+
+Quick links: [HF Space setup](deploy/HF_SPACE.md) · [Vercel setup](deploy/VERCEL.md) · [Smoke test script](deploy/smoke-test.ps1)
+
 ## Quick start
 
 ### Prerequisites

@@ -72,27 +72,15 @@ function NavLinks({ pathname, collapsed, onNavigate }) {
   );
 }
 
-function SidebarBrand({ collapsed, onToggle, showToggle = true }) {
+function SidebarBrand({ collapsed }) {
   return (
     <div
       className={cn(
         'flex h-14 shrink-0 items-center border-b border-slate-200 bg-white shadow-sm',
-        collapsed ? 'justify-center gap-1 px-2' : 'gap-2 px-3',
+        collapsed ? 'justify-center px-2' : 'px-3',
       )}
     >
       <SidebarBrandLockup collapsed={collapsed} href="/" priority className={collapsed ? '' : 'min-w-0 flex-1'} />
-      {showToggle && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 shrink-0 text-slate-500"
-          onClick={onToggle}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-        </Button>
-      )}
     </div>
   );
 }
@@ -125,10 +113,10 @@ function SidebarFooter({ condition, collapsed }) {
   );
 }
 
-function SidebarPanel({ pathname, collapsed, condition, onToggle, onNavigate, showToggle = true }) {
+function SidebarPanel({ pathname, collapsed, condition, onNavigate }) {
   return (
     <>
-      <SidebarBrand collapsed={collapsed} onToggle={onToggle} showToggle={showToggle} />
+      <SidebarBrand collapsed={collapsed} />
       <div className="flex-1 overflow-y-auto">
         <NavLinks pathname={pathname} collapsed={collapsed} onNavigate={onNavigate} />
       </div>
@@ -189,12 +177,7 @@ export default function AppShell({ children, title, headerActions }) {
           collapsed ? 'w-[4.5rem]' : 'w-64'
         )}
       >
-        <SidebarPanel
-          pathname={pathname}
-          collapsed={collapsed}
-          condition={condition}
-          onToggle={toggleSidebar}
-        />
+        <SidebarPanel pathname={pathname} collapsed={collapsed} condition={condition} />
       </aside>
 
       <div
@@ -215,9 +198,7 @@ export default function AppShell({ children, title, headerActions }) {
                 pathname={pathname}
                 collapsed={false}
                 condition={condition}
-                onToggle={() => {}}
                 onNavigate={() => setMobileOpen(false)}
-                showToggle={false}
               />
             </SheetContent>
           </Sheet>

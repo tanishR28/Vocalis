@@ -36,7 +36,7 @@ ML/.venv/
 ML/venv/
 
 # --------------------------------------------------
-# Node / Next.js (frontend lives at frontend/ or Frontend/)
+# Node / Next.js (frontend at frontend/)
 # --------------------------------------------------
 node_modules/
 **/node_modules/
@@ -44,6 +44,7 @@ node_modules/
 **/.next/
 out/
 **/out/
+frontend/out.css
 .vercel/
 **/.vercel/
 coverage/
@@ -62,7 +63,6 @@ pnpm-debug.log*
 .env.*.local
 backend/.env
 frontend/.env.local
-Frontend/.env.local
 
 # Allow examples only
 !.env.example

@@ -1,0 +1,41 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+.venv
+venv
+.pytest_cache
+.mypy_cache
+
+# Node / Next.js (not needed in API container)
+frontend/node_modules
+frontend/.next
+Frontend/
+
+# Secrets
+.env
+.env.local
+backend/.env
+frontend/.env.local
+
+# Local runtime
+backend/.data
+backend/temp_*
+*.wav
+*.mp3
+
+# IDE
+.idea
+.vscode
+
+# Large unrelated datasets
+/datasets/
+ML/data/
+ML/datasets/**/*.csv
+
+# Docs / misc not needed at runtime
+note.txt
+*.pdf
