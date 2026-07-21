@@ -1,5 +1,7 @@
 # Deploying Vocalis (Vercel + Hugging Face Spaces + Supabase)
 
+Part of the [docs index](./README.md). For architecture and interview prep, see [ARCHITECTURE.md](./ARCHITECTURE.md) and [INTERVIEW_QA.md](./INTERVIEW_QA.md).
+
 Production layout:
 
 | Service | Host | Role |

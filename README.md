@@ -32,6 +32,20 @@ supabase_schema.sql PostgreSQL schema
 - **History** — timeline of voice analyses (`/history`)
 - **Medical record import** — optional PDF/image import for demo datasets
 
+## Documentation
+
+Interview-oriented technical docs live in **[`docs/`](docs/README.md)** — architecture, features, frontend, backend, ML, auth, database, and Q&A:
+
+| Doc | Topic |
+|-----|--------|
+| [docs/README.md](docs/README.md) | Doc index + reading order |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design & data flow |
+| [docs/FEATURES.md](docs/FEATURES.md) | Features mapped to code |
+| [docs/ML_PIPELINE.md](docs/ML_PIPELINE.md) | Librosa / Praat / XGBoost / LSTM |
+| [docs/INTERVIEW_QA.md](docs/INTERVIEW_QA.md) | Likely interview questions |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Vercel + HF + Supabase |
+| [docs/SUPABASE.md](docs/SUPABASE.md) | Auth, tables, env vars |
+
 ## Deployment (production)
 
 See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the full interview-demo setup:

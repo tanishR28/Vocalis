@@ -1,5 +1,7 @@
 # Supabase in Vocalis
 
+Part of the [docs index](./README.md). Deeper schema notes: [DATABASE.md](./DATABASE.md). Auth/security: [AUTH_AND_SECURITY.md](./AUTH_AND_SECURITY.md).
+
 Vocalis uses **Supabase PostgreSQL** for cloud persistence and **Supabase Auth (Google OAuth)** for per-user data. The FastAPI backend is the ML/analysis layer; the Next.js app talks to the API with a Bearer JWT when logged in.
 
 **Audio is not stored.** Recordings are analyzed in memory on the server; only biomarker scores and metadata go to Postgres. This keeps usage within the **Supabase free tier** (no Storage bucket required).
