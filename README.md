@@ -1,6 +1,6 @@
 # Vocalis
 
-AI-powered voice biomarker tracking for **Parkinson's** and **Asthma**. Users record short daily voice samples; the backend extracts acoustic features, runs ML models, and stores scores in Supabase for trends and (Parkinson's) LSTM progression forecasts.
+AI-powered voice biomarker tracking for **Parkinson's** . Users record short daily voice samples; the backend extracts acoustic features, runs ML models, and stores scores in Supabase for trends and (Parkinson's) LSTM progression forecasts.
 
 **Audio is never stored** — only numeric biomarkers and metadata.
 
