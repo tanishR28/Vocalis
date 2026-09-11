@@ -1,5 +1,4 @@
 """XGBoost multi-output predictor for Parkinson's, Depression, and Asthma."""
-
 import joblib
 import numpy as np
 from pathlib import Path

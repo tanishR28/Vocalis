@@ -1,16 +1,13 @@
-# --------------------------------------------------
 # OS / editor
-# --------------------------------------------------
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
 
-# --------------------------------------------------
 # Python
-# --------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
@@ -23,56 +20,37 @@ htmlcov/
 dist/
 build/
 
-# Virtual environments (any location)
+# Virtual environments
 .venv/
 venv/
 env/
 backend/.venv/
-
-# Local LSTM history fallback (dev without Supabase)
-backend/.data/
 backend/venv/
 ML/.venv/
 ML/venv/
 
-# --------------------------------------------------
-# Node / Next.js (frontend at frontend/)
-# --------------------------------------------------
+# Node / Next.js
 node_modules/
-**/node_modules/
 .next/
-**/.next/
 out/
-**/out/
 frontend/out.css
 .vercel/
-**/.vercel/
 coverage/
-**/coverage/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 *.tsbuildinfo
 
-# --------------------------------------------------
 # Secrets — never commit
-# --------------------------------------------------
 .env
 .env.local
 .env.*.local
 backend/.env
 frontend/.env.local
 
-# Allow examples only
-!.env.example
-!**/.env.example
-!frontend/.env.example
-!Frontend/.env.example
-
-# --------------------------------------------------
-# Runtime / temp audio
-# --------------------------------------------------
+# Runtime / temp
+backend/.data/
 backend/temp_*
 **/temp_*
 *.wav
@@ -81,29 +59,27 @@ backend/temp_*
 *.flac
 *.webm
 
-# --------------------------------------------------
-# Local notes & one-off reports (not part of the app)
-# --------------------------------------------------
+# Local notes & reports
 note.txt
 *.pdf
 
-# --------------------------------------------------
-# Root-level raw audio datasets (your own training WAVs)
-# NOT the ML synthetic CSV pipeline under ML/datasets/
-# --------------------------------------------------
+# Raw audio datasets (not ML synthetic CSV pipeline)
 /datasets/
 
-# --------------------------------------------------
-# ML — generated training data & trained weights
-# Code under ML/ IS tracked. After clone: run datasets/generate.py
-# and training/train_*.py to produce models locally.
-# --------------------------------------------------
+# ML training data (generated locally; models ARE committed for clone-and-run)
 ML/data/
 ML/datasets/**/*.csv
-ML/models/*.pkl
-ML/models/*.joblib
-ML/models/*.keras
-ML/models/*.h5
-ML/models/*.pth
-ML/__pycache__/
 ML/**/__pycache__/
+
+# Internal / deploy / interview docs (not part of public repo)
+docs/
+deploy/
+
+# Agent / IDE clutter
+**/AGENTS.md
+**/CLAUDE.md
+frontend/README.md
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/

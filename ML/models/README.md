@@ -1,6 +1,8 @@
 # Model artifacts
 
-## Parkinson's UPDRS (real model — preferred)
+Pre-trained weights in this folder are **committed to the repo** so the app runs after clone without retraining. To regenerate, see [`../TRAINING.md`](../TRAINING.md).
+
+## Parkinson's UPDRS (primary)
 
 | File | Purpose |
 |------|---------|
